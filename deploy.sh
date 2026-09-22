@@ -14,6 +14,8 @@ SECRETS_FILE="${SCHOOL_TIMETABLE_ENV:-/opt/zhangyahan/school-timetable.env}"
 BACKEND_DIR="${PROJECT_DIR}/backend"
 FRONTEND_DIR="${PROJECT_DIR}/frontend"
 WEBROOT="${SCHOOL_TIMETABLE_WEBROOT:-/www/wwwroot/xph.silyahuukou.cn/school-timetable}"
+# 后端运行用户（宝塔 Python 项目 gunicorn 的 user），需能读写 db.sqlite3 / logs
+BACKEND_USER="${BACKEND_USER:-www}"
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
@@ -44,6 +46,10 @@ echo "  → Python 依赖已就绪"
 
 uv run python manage.py migrate
 echo "  → 数据库迁移完成"
+
+# 交给后端运行用户，保证 db.sqlite3 / logs 可写
+$SUDO chown -R "${BACKEND_USER}:${BACKEND_USER}" "${BACKEND_DIR}"
+echo "  → backend 归属已设为 ${BACKEND_USER}"
 
 # -------------------------------------------------------------------
 # 前端
