@@ -1,11 +1,21 @@
+import os
+from datetime import timedelta
 from pathlib import Path
+
 from decouple import config
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = config("SECRET_KEY")
+# 根据 ENV 加载 .env.{development|production}（由 manage.py / gunicorn 启动）
+env = os.environ.get("ENV", "development")
+load_dotenv(BASE_DIR / f".env.{env}")
+
+SECRET_KEY = config("SECRET_KEY", default="django-insecure-change-me-in-production")
 DEBUG = config("DEBUG", default=False, cast=bool)
-ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="*").split(",")
+ALLOWED_HOSTS = [
+    h for h in config("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",") if h
+]
 
 INSTALLED_APPS = [
     "django.contrib.auth",
@@ -78,7 +88,14 @@ MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ── CORS ──
-CORS_ALLOW_ALL_ORIGINS = True
+# 开发：默认全开；生产：默认关闭，使用 CORS_ALLOWED_ORIGINS 白名单
+CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=DEBUG, cast=bool)
+CORS_ALLOWED_ORIGINS = [
+    o
+    for o in config("CORS_ALLOWED_ORIGINS", default="").split(",")
+    if o
+]
+CORS_ALLOW_CREDENTIALS = True
 
 # ── DRF ──
 REST_FRAMEWORK = {
@@ -111,10 +128,108 @@ SPECTACULAR_SETTINGS = {
 }
 
 # ── JWT ──
-from datetime import timedelta
-
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME": timedelta(
+        minutes=config("JWT_ACCESS_MINUTES", default=120, cast=int)
+    ),
+    "REFRESH_TOKEN_LIFETIME": timedelta(
+        days=config("JWT_REFRESH_DAYS", default=7, cast=int)
+    ),
     "ROTATE_REFRESH_TOKENS": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# ── Logging ──
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+LOG_LEVEL = config("LOG_LEVEL", default="DEBUG" if DEBUG else "INFO")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": (
+                "[{asctime}] {levelname:7s} {name:30s} "
+                "{funcName}:{lineno:4d} | {message}"
+            ),
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+        "simple": {
+            "format": "[{asctime}] {levelname:7s} {name:20s} | {message}",
+            "style": "{",
+            "datefmt": "%H:%M:%S",
+        },
+    },
+    "handlers": {
+        "console": {
+            "level": LOG_LEVEL,
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+            "formatter": "simple",
+        },
+        "file": {
+            "level": LOG_LEVEL,
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "filename": LOG_DIR / "app.log",
+            "when": "midnight",
+            "interval": 1,
+            "backupCount": 30,
+            "encoding": "utf-8",
+            "formatter": "verbose",
+        },
+        "file_error": {
+            "level": "WARNING",
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "filename": LOG_DIR / "error.log",
+            "when": "midnight",
+            "interval": 1,
+            "backupCount": 90,
+            "encoding": "utf-8",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console", "file", "file_error"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console", "file", "file_error"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.server": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "rest_framework": {
+            "handlers": ["console", "file"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "timetable": {
+            "handlers": ["console", "file", "file_error"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "authentication": {
+            "handlers": ["console", "file", "file_error"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "common": {
+            "handlers": ["console", "file", "file_error"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+    },
+    "root": {
+        "handlers": ["console", "file"],
+        "level": LOG_LEVEL,
+    },
 }
