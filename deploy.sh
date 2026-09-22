@@ -16,6 +16,8 @@ FRONTEND_DIR="${PROJECT_DIR}/frontend"
 WEBROOT="${SCHOOL_TIMETABLE_WEBROOT:-/www/wwwroot/xph.silyahuukou.cn/school-timetable}"
 # 后端运行用户（宝塔 Python 项目 gunicorn 的 user），需能读写 db.sqlite3 / logs
 BACKEND_USER="${BACKEND_USER:-www}"
+# uv 托管的 Python 安装目录（需对运行用户可读；默认 /opt/uv-python）
+export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-/opt/uv-python}"
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
