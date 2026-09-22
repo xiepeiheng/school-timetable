@@ -57,7 +57,7 @@ set -a; source "${SECRETS_FILE}"; set +a
 envsubst < .env.production.template > .env.production
 echo "  → frontend/.env.production 已生成"
 
-npm install
+npm ci
 echo "  → Node 依赖已就绪"
 
 npm run build-prod
