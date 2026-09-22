@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+db.sqlite3
+staticfiles/
+media/
+
+# Env
+.env.development
+.env.production
+
+# Node
+node_modules/
+dist/
+
+# IDE / tooling
+.idea/
+.vscode/
+.playwright-mcp/
+*.log
