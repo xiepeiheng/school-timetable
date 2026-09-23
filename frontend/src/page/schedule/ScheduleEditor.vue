@@ -247,9 +247,22 @@ async function saveTemplate() {
 
 // ── 清空 ──
 const clearModal = ref(false)
-const clearForm = ref({ start_date: monday.value, end_date: addDays(monday.value, 6) })
+const clearForm = ref<{ start_date: string | null; end_date: string | null }>({
+  start_date: monday.value,
+  end_date: addDays(monday.value, 6),
+})
+function openClear() {
+  clearForm.value = {
+    start_date: monday.value,
+    end_date: addDays(monday.value, 6),
+  }
+  clearModal.value = true
+}
 async function doClear() {
-  const res = await reqSessionClear(clearForm.value)
+  const { start_date, end_date } = clearForm.value
+  if (!start_date || !end_date)
+    return message.warning("请选择开始和结束日期")
+  const res = await reqSessionClear({ start_date, end_date })
   message.success(`已清空 ${res.data.deleted} 条`)
   clearModal.value = false
   reload()
@@ -257,11 +270,19 @@ async function doClear() {
 
 // ── 复制单日 ──
 const copyModal = ref(false)
-const copyForm = ref({ source_date: "", target_date: "" })
+const copyForm = ref<{ source_date: string | null; target_date: string | null }>({
+  source_date: null,
+  target_date: null,
+})
+function openCopy() {
+  copyForm.value = { source_date: monday.value, target_date: null }
+  copyModal.value = true
+}
 async function doCopy() {
-  if (!copyForm.value.source_date || !copyForm.value.target_date)
+  const { source_date, target_date } = copyForm.value
+  if (!source_date || !target_date)
     return message.warning("请选择源日期和目标日期")
-  const res = await reqSessionCopyDay(copyForm.value)
+  const res = await reqSessionCopyDay({ source_date, target_date })
   message.success(`已复制 ${res.data.copied} 条`)
   copyModal.value = false
   reload()
@@ -269,18 +290,31 @@ async function doCopy() {
 
 // ── 班级同步 ──
 const syncModal = ref(false)
-const syncForm = ref({
-  source_date: "",
-  source_class: null as number | null,
-  target_classes: [] as number[],
+const syncForm = ref<{
+  source_date: string | null
+  source_class: number | null
+  target_classes: number[]
+}>({
+  source_date: null,
+  source_class: null,
+  target_classes: [],
 })
+function openSync() {
+  syncForm.value = {
+    source_date: monday.value,
+    source_class: selectedClass.value,
+    target_classes: [],
+  }
+  syncModal.value = true
+}
 async function doSync() {
-  if (!syncForm.value.source_date || !syncForm.value.source_class)
+  const { source_date, source_class, target_classes } = syncForm.value
+  if (!source_date || !source_class)
     return message.warning("请选择源日期和源班级")
   const res = await reqSessionSyncClass({
-    source_date: syncForm.value.source_date,
-    source_class: syncForm.value.source_class,
-    target_classes: syncForm.value.target_classes,
+    source_date,
+    source_class,
+    target_classes,
   })
   message.success(`已同步到 ${res.data.target_classes} 个班，共 ${res.data.copied} 条`)
   syncModal.value = false
@@ -325,9 +359,9 @@ onMounted(async () => {
       <n-button type="primary" @click="applyModal = true">一键排课</n-button>
       <n-button @click="tplModal = true">存为模板</n-button>
       <n-button @click="router.push({ name: 'templates' })">模板管理</n-button>
-      <n-button @click="copyModal = true">复制单日</n-button>
-      <n-button @click="syncModal = true">班级同步</n-button>
-      <n-button type="error" ghost @click="clearModal = true">清空</n-button>
+      <n-button @click="openCopy">复制单日</n-button>
+      <n-button @click="openSync">班级同步</n-button>
+      <n-button type="error" ghost @click="openClear">清空</n-button>
       <n-button @click="reload">刷新</n-button>
     </div>
 

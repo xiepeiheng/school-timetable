@@ -215,28 +215,33 @@ async function doCreate() {
 
 // ── 从某周生成模板 ──
 const fromWeekModal = ref(false)
-const fromWeekForm = ref({
+const fromWeekForm = ref<{
+  name: string
+  note: string
+  is_default: boolean
+  monday: string | null
+}>({
   name: "",
   note: "",
   is_default: false,
-  monday: "",
+  monday: null,
 })
 function isDateDisabled(timestamp: number) {
   return new Date(timestamp).getDay() !== 1
 }
 async function doCreateFromWeek() {
-  if (!fromWeekForm.value.name || !fromWeekForm.value.monday)
-    return message.warning("请填写名称并选择周一")
+  const { name, note, is_default, monday } = fromWeekForm.value
+  if (!name || !monday) return message.warning("请填写名称并选择周一")
   const res = await reqTemplateCreateFromWeek({
-    name: fromWeekForm.value.name,
-    note: fromWeekForm.value.note,
-    is_default: fromWeekForm.value.is_default,
-    start_date: fromWeekForm.value.monday,
-    end_date: addDays(fromWeekForm.value.monday, 6),
+    name,
+    note,
+    is_default,
+    start_date: monday,
+    end_date: addDays(monday, 6),
   })
   message.success("模板已保存")
   fromWeekModal.value = false
-  fromWeekForm.value = { name: "", note: "", is_default: false, monday: "" }
+  fromWeekForm.value = { name: "", note: "", is_default: false, monday: null }
   await loadTemplates()
   selectedTemplateId.value = res.data.id
   await loadEntries()
@@ -289,33 +294,39 @@ function remove(t: ScheduleTemplate) {
 
 // ── 应用模板 ──
 const applyModal = ref(false)
-const applyForm = ref({ monday: "", overwrite: true })
+const applyForm = ref<{ monday: string | null; overwrite: boolean }>({
+  monday: null,
+  overwrite: true,
+})
+function openApply() {
+  applyForm.value = { monday: null, overwrite: true }
+  applyModal.value = true
+}
 async function doApply() {
-  if (!selectedTemplateId.value || !applyForm.value.monday)
+  const { monday, overwrite } = applyForm.value
+  if (!selectedTemplateId.value || !monday)
     return message.warning("请选择要排课的周一")
   const tpl = selectedTemplate.value
   const uncovered =
-    tpl && applyForm.value.overwrite
-      ? classes.value.length - tpl.class_count
-      : 0
+    tpl && overwrite ? classes.value.length - tpl.class_count : 0
   if (uncovered > 0) {
     dialog.warning({
       title: "覆盖确认",
       content: `该模板只包含 ${tpl!.class_count} 个班级，覆盖应用会清空其余 ${uncovered} 个班级当周的课表，是否继续？`,
       positiveText: "继续",
       negativeText: "取消",
-      onPositiveClick: () => applyNow(),
+      onPositiveClick: () => applyNow(monday, overwrite),
     })
   } else {
-    await applyNow()
+    await applyNow(monday, overwrite)
   }
 }
-async function applyNow() {
+async function applyNow(monday: string, overwrite: boolean) {
   const res = await reqTemplateApply({
     template: selectedTemplateId.value!,
-    start_date: applyForm.value.monday,
-    end_date: addDays(applyForm.value.monday, 6),
-    overwrite: applyForm.value.overwrite,
+    start_date: monday,
+    end_date: addDays(monday, 6),
+    overwrite,
   })
   message.success(`排课完成：新增 ${res.data.created}，跳过 ${res.data.skipped}`)
   applyModal.value = false
@@ -414,7 +425,7 @@ onMounted(async () => {
       />
       <n-button @click="clearClass">清空本班</n-button>
       <n-button @click="copyModal = true">复制周X到周Y</n-button>
-      <n-button type="primary" @click="applyModal = true">应用该模板到某周</n-button>
+      <n-button type="primary" @click="openApply">应用该模板到某周</n-button>
     </div>
     <n-empty v-else description="请选择上方模板的「编辑内容」" />
 
