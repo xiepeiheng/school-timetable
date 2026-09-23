@@ -16,3 +16,9 @@ dependencies = [
     "xlrd>=2.0",
     "gunicorn>=21.2",
 ]
+
+# 固定项目使用的镜像源（国内），避免不同机器全局配置不同导致 uv.lock 反复改写
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
