@@ -1,12 +1,18 @@
+from datetime import date
+from urllib.parse import quote
+
 from django.db.models import Count
+from django.http import HttpResponse
 from rest_framework import viewsets
 from rest_framework.decorators import action
 
 from common.exceptions import BusinessException, NotFoundException
 from common.response import success_response
 from timetable import services
+from timetable.exporting import build_monthly_workbook, build_teacher_workbook
 from timetable.models import (
     CourseSession,
+    ReportGroup,
     ScheduleTemplate,
     SchoolClass,
     Semester,
@@ -25,15 +31,14 @@ from timetable.serializers import (
     CourseSessionReadSerializer,
     CourseSessionWriteSerializer,
     CreateFromWeekSerializer,
-    ReportQuerySerializer,
-    ScheduleLockSerializer,
+    ReportGroupSerializer,
     ScheduleTemplateReadSerializer,
     ScheduleTemplateWriteSerializer,
     SchoolClassReadSerializer,
     SchoolClassWriteSerializer,
     SemesterSerializer,
     SubjectSerializer,
-    SyncClassSerializer,
+    SwapSessionsSerializer,
     TeacherReadSerializer,
     TeacherWriteSerializer,
     TeachingAssignmentBulkItemSerializer,
@@ -43,6 +48,7 @@ from timetable.serializers import (
     TemplateEntryBulkItemSerializer,
     TemplateEntryReadSerializer,
     TemplateEntryWriteSerializer,
+    TimetableQuerySerializer,
     TimeSlotReorderSerializer,
     TimeSlotSerializer,
 )
@@ -127,6 +133,12 @@ class TimeSlotViewSet(ActiveFilterMixin, viewsets.ModelViewSet):
         for index, slot_id in enumerate(ids):
             TimeSlot.objects.filter(id=slot_id).update(sort_order=index)
         return success_response(message="排序已更新")
+
+
+class ReportGroupViewSet(viewsets.ModelViewSet):
+    queryset = ReportGroup.objects.all()
+    serializer_class = ReportGroupSerializer
+    pagination_class = None
 
 
 class TeachingAssignmentViewSet(viewsets.ModelViewSet):
@@ -299,10 +311,6 @@ class CourseSessionViewSet(viewsets.ModelViewSet):
         return CourseSessionReadSerializer
 
     def perform_destroy(self, instance):
-        if services.is_locked(instance.date):
-            from common.exceptions import BusinessException
-
-            raise BusinessException(message="该日期已被锁定，不可删除")
         instance.delete()
 
     @action(detail=False, methods=["post"])
@@ -313,6 +321,14 @@ class CourseSessionViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         result = services.bulk_upsert_sessions(serializer.validated_data)
         return success_response(data=result, message="已保存")
+
+    @action(detail=False, methods=["post"])
+    def swap(self, request):
+        serializer = SwapSessionsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        id_a, id_b = serializer.validated_data["sessions"]
+        result = services.swap_sessions(id_a, id_b)
+        return success_response(data=result, message="已交换")
 
     @action(detail=False, methods=["post"])
     def clear(self, request):
@@ -340,43 +356,11 @@ class CourseSessionViewSet(viewsets.ModelViewSet):
         )
         return success_response(data=result, message="已复制")
 
-    @action(detail=False, methods=["post"], url_path="sync-class")
-    def sync_class(self, request):
-        serializer = SyncClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        result = services.sync_class(
-            source_date=data["source_date"],
-            source_class_id=data["source_class"],
-            target_class_ids=data.get("target_classes") or None,
-            time_slot_ids=data.get("time_slots") or None,
-        )
-        return success_response(data=result, message="已同步")
 
-
-class ScheduleLockViewSet(viewsets.ViewSet):
-    def list(self, request):
-        lock = services.get_lock()
-        return success_response(data={"locked_through": lock})
-
-    def create(self, request):
-        serializer = ScheduleLockSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        lock = services.set_lock(serializer.validated_data.get("locked_through"))
-        return success_response(
-            data={"locked_through": lock.locked_through}, message="锁定已更新"
-        )
-
-    @action(detail=False, methods=["delete"])
-    def clear(self, request):
-        services.set_lock(None)
-        return success_response(message="锁定已取消")
-
-
-class ReportViewSet(viewsets.ViewSet):
+class TimetableViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"], url_path="class-timetable")
     def class_timetable(self, request):
-        serializer = ReportQuerySerializer(data=request.query_params)
+        serializer = TimetableQuerySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         params = request.query_params
@@ -389,7 +373,7 @@ class ReportViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"], url_path="teacher-timetable")
     def teacher_timetable(self, request):
-        serializer = ReportQuerySerializer(data=request.query_params)
+        serializer = TimetableQuerySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         params = request.query_params
@@ -400,23 +384,58 @@ class ReportViewSet(viewsets.ViewSet):
         )
         return success_response(data=result)
 
-    @action(detail=False, methods=["get"], url_path="teacher-detail")
-    def teacher_detail(self, request):
-        serializer = ReportQuerySerializer(data=request.query_params)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        params = request.query_params
-        if not params.get("teacher"):
-            return success_response(data=None, message="缺少教师参数")
-        result = services.teacher_detail(
-            int(params["teacher"]), data["start_date"], data["end_date"]
-        )
-        return success_response(data=result)
 
-    @action(detail=False, methods=["get"], url_path="teacher-summary")
-    def teacher_summary(self, request):
-        serializer = ReportQuerySerializer(data=request.query_params)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        result = services.teacher_summary(data["start_date"], data["end_date"])
-        return success_response(data=result)
+class ExportViewSet(viewsets.ViewSet):
+    @action(detail=False, methods=["get"])
+    def monthly(self, request):
+        month = request.query_params.get("month", "")
+        template_id = request.query_params.get("template")
+        try:
+            year_s, month_s = month.split("-")
+            year, mon = int(year_s), int(month_s)
+            if not 1 <= mon <= 12:
+                raise ValueError
+        except ValueError:
+            raise BusinessException(message="月份格式应为 YYYY-MM")
+
+        template = ScheduleTemplate.objects.filter(pk=template_id).first()
+        if not template:
+            raise NotFoundException(message="模板不存在")
+
+        workbook = build_monthly_workbook(year, mon, template)
+        response = HttpResponse(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        )
+        filename = f"{year}年{mon}月高一（1）部课时（分班后）.xlsx"
+        response["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(filename)}"
+        )
+        workbook.save(response)
+        return response
+
+    @action(detail=False, methods=["get"], url_path="teacher-sheets")
+    def teacher_sheets(self, request):
+        start = request.query_params.get("start", "")
+        end = request.query_params.get("end", "")
+        try:
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
+        except ValueError:
+            raise BusinessException(message="日期格式应为 YYYY-MM-DD")
+        if start_date > end_date:
+            raise BusinessException(message="起始日期不能晚于结束日期")
+
+        workbook = build_teacher_workbook(start_date, end_date)
+        response = HttpResponse(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        )
+        filename = f"教师个人课表_{start}_{end}.xlsx"
+        response["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(filename)}"
+        )
+        workbook.save(response)
+        return response

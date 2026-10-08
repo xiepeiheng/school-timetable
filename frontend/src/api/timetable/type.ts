@@ -31,14 +31,10 @@ export interface CourseSession {
   subject_name: string
   teacher: number | null
   teacher_name: string
-  status: string
+  weight: string
+  flag: string
   source: string
   note: string
-}
-
-export interface ScheduleLock {
-  locked_through: string | null
-  updated_at?: string
 }
 
 export interface SlotInfo {
@@ -58,7 +54,7 @@ export interface ClassTimetableRes {
     subject_name: string
     teacher: number | null
     teacher_name: string
-    status: string
+    flag: string
     note: string
   }[]
 }
@@ -74,36 +70,12 @@ export interface TeacherTimetableRes {
     school_class_name: string
     subject: number
     subject_name: string
+    flag: string
     note: string
   }[]
   conflicts: {
     date: string
     time_slot: number
     items: TeacherTimetableRes["sessions"]
-  }[]
-}
-
-export interface TeacherDetailRow {
-  date: string
-  weekday: number
-  time_slot: number
-  time_slot_name: string
-  weight: string
-  school_class: number
-  school_class_name: string
-  subject: number
-  subject_name: string
-  status: string
-  note: string
-}
-
-export interface TeacherSummaryRes {
-  slots: { id: number; name: string; weight: string }[]
-  teachers: {
-    teacher: number
-    teacher_name: string
-    subject_name: string
-    counts: Record<string, number>
-    total: string
   }[]
 }

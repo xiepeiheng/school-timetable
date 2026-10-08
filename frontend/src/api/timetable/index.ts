@@ -3,10 +3,7 @@ import type { PaginatedData, ResponseData } from "@/api/common_type"
 import type {
   ClassTimetableRes,
   CourseSession,
-  ScheduleLock,
   ScheduleTemplate,
-  TeacherDetailRow,
-  TeacherSummaryRes,
   TeacherTimetableRes,
   TemplateEntry,
 } from "./type"
@@ -66,7 +63,7 @@ export const reqTemplateApply = (data: {
   end_date: string
   overwrite?: boolean
 }) =>
-  http.post<ResponseData<{ created: number; skipped: number; locked_days: number }>>(
+  http.post<ResponseData<{ created: number; skipped: number }>>(
     "/templates/apply/",
     data,
   )
@@ -89,12 +86,16 @@ export const reqSessionBulk = (
     school_class: number
     subject: number | null
     teacher?: number | null
+    flag?: string
     note?: string
   }[],
 ) => http.post<ResponseData<{ created: number; updated: number; deleted: number }>>(
   "/sessions/bulk/",
   items,
 )
+
+export const reqSessionSwap = (sessions: [number, number]) =>
+  http.post<ResponseData<{ swapped: number[] }>>("/sessions/swap/", { sessions })
 
 export const reqSessionClear = (data: {
   start_date: string
@@ -110,33 +111,13 @@ export const reqSessionCopyDay = (data: {
   time_slots?: number[]
 }) => http.post<ResponseData<{ copied: number }>>("/sessions/copy-day/", data)
 
-export const reqSessionSyncClass = (data: {
-  source_date: string
-  source_class: number
-  target_classes?: number[]
-  time_slots?: number[]
-}) =>
-  http.post<ResponseData<{ copied: number; target_classes: number }>>(
-    "/sessions/sync-class/",
-    data,
-  )
-
-// ── 锁定 ──
-export const reqLockGet = () =>
-  http.get<ResponseData<{ locked_through: string | null }>>("/lock/")
-export const reqLockSet = (locked_through: string | null) =>
-  http.post<ResponseData<{ locked_through: string | null }>>("/lock/", {
-    locked_through,
-  })
-export const reqLockClear = () => http.delete<ResponseData<null>>("/lock/clear/")
-
-// ── 报表 ──
+// ── 课表查看 ──
 export const reqClassTimetable = (params: {
   school_class: number
   start_date: string
   end_date: string
 }) =>
-  http.get<ResponseData<ClassTimetableRes>>("/reports/class-timetable/", {
+  http.get<ResponseData<ClassTimetableRes>>("/timetable/class-timetable/", {
     params,
   })
 
@@ -145,23 +126,13 @@ export const reqTeacherTimetable = (params: {
   start_date: string
   end_date: string
 }) =>
-  http.get<ResponseData<TeacherTimetableRes>>("/reports/teacher-timetable/", {
+  http.get<ResponseData<TeacherTimetableRes>>("/timetable/teacher-timetable/", {
     params,
   })
 
-export const reqTeacherDetail = (params: {
-  teacher: number
-  start_date: string
-  end_date: string
-}) =>
-  http.get<ResponseData<TeacherDetailRow[]>>("/reports/teacher-detail/", {
-    params,
-  })
+// ── 导出 ──
+export const reqExportMonthly = (params: { month: string; template: number }) =>
+  http.get<Blob>("/export/monthly/", { params, responseType: "blob" })
 
-export const reqTeacherSummary = (params: {
-  start_date: string
-  end_date: string
-}) =>
-  http.get<ResponseData<TeacherSummaryRes>>("/reports/teacher-summary/", {
-    params,
-  })
+export const reqExportTeacherSheets = (params: { start: string; end: string }) =>
+  http.get<Blob>("/export/teacher-sheets/", { params, responseType: "blob" })

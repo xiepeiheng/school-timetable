@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from timetable.models import (
     CourseSession,
-    ScheduleLock,
+    ReportGroup,
     ScheduleTemplate,
     SchoolClass,
     Semester,
@@ -80,10 +80,32 @@ class SchoolClassWriteSerializer(serializers.ModelSerializer):
         ]
 
 
+class ReportGroupSerializer(serializers.ModelSerializer):
+    kind_display = serializers.CharField(
+        source="get_kind_display", read_only=True
+    )
+
+    class Meta:
+        model = ReportGroup
+        fields = ["id", "kind", "kind_display", "sort_order"]
+
+
 class TimeSlotSerializer(serializers.ModelSerializer):
+    report_group_name = serializers.CharField(
+        source="report_group.get_kind_display", read_only=True, default=""
+    )
+
     class Meta:
         model = TimeSlot
-        fields = ["id", "name", "sort_order", "weight", "is_active"]
+        fields = [
+            "id",
+            "name",
+            "sort_order",
+            "weight",
+            "report_group",
+            "report_group_name",
+            "is_active",
+        ]
 
 
 class TimeSlotReorderSerializer(serializers.Serializer):
@@ -234,7 +256,7 @@ class CourseSessionReadSerializer(serializers.ModelSerializer):
             "teacher",
             "teacher_name",
             "weight",
-            "status",
+            "flag",
             "source",
             "note",
         ]
@@ -250,7 +272,7 @@ class CourseSessionWriteSerializer(serializers.ModelSerializer):
             "school_class",
             "subject",
             "teacher",
-            "status",
+            "flag",
             "source",
             "note",
         ]
@@ -262,8 +284,14 @@ class CourseSessionBulkWriteItemSerializer(serializers.Serializer):
     school_class = serializers.IntegerField()
     subject = serializers.IntegerField(allow_null=True)
     teacher = serializers.IntegerField(allow_null=True, required=False)
-    status = serializers.CharField(required=False)
+    flag = serializers.CharField(required=False)
     note = serializers.CharField(required=False, allow_blank=True)
+
+
+class SwapSessionsSerializer(serializers.Serializer):
+    sessions = serializers.ListField(
+        child=serializers.IntegerField(), min_length=2, max_length=2
+    )
 
 
 class ClearRangeSerializer(serializers.Serializer):
@@ -288,29 +316,9 @@ class CopyDaySerializer(serializers.Serializer):
     )
 
 
-class SyncClassSerializer(serializers.Serializer):
-    source_date = serializers.DateField()
-    source_class = serializers.IntegerField()
-    target_classes = serializers.ListField(
-        child=serializers.IntegerField(), required=False, default=list
-    )
-    time_slots = serializers.ListField(
-        child=serializers.IntegerField(), required=False, default=list
-    )
+# ────────────────────────── 课表查看 ──────────────────────────
 
 
-class ScheduleLockSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ScheduleLock
-        fields = ["locked_through", "updated_at"]
-        read_only_fields = ["updated_at"]
-
-
-# ────────────────────────── 报表 ──────────────────────────
-
-
-class ReportQuerySerializer(serializers.Serializer):
+class TimetableQuerySerializer(serializers.Serializer):
     start_date = serializers.DateField()
     end_date = serializers.DateField()
-    school_class = serializers.IntegerField(required=False, allow_null=True)
-    teacher = serializers.IntegerField(required=False, allow_null=True)

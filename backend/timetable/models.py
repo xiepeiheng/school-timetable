@@ -69,12 +69,38 @@ class SchoolClass(models.Model):
         return self.name
 
 
+class ReportGroup(models.Model):
+    """报告分组：导出时把时间段归入 早读/上午/下午/自习 四类之一。"""
+
+    class Kind(models.TextChoices):
+        EARLY_READ = "early_read", "早读"
+        MORNING = "morning", "上午"
+        AFTERNOON = "afternoon", "下午"
+        SELF_STUDY = "self_study", "自习"
+
+    kind = models.CharField(max_length=20, choices=Kind.choices, unique=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return self.get_kind_display()
+
+
 class TimeSlot(models.Model):
     """时间段（课表的一行）。只表示排序，不绑定具体时刻。权重默认 1。"""
 
     name = models.CharField(max_length=50)
     sort_order = models.PositiveIntegerField(default=0)
     weight = models.DecimalField(max_digits=6, decimal_places=2, default=1)
+    report_group = models.ForeignKey(
+        ReportGroup,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="time_slots",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -152,11 +178,11 @@ class TemplateEntry(models.Model):
 class CourseSession(models.Model):
     """实际课程记录：历史的唯一真相。"""
 
-    class Status(models.TextChoices):
+    class Flag(models.TextChoices):
         NORMAL = "normal", "正常"
-        SUSPENDED = "suspended", "停课"
-        EXAM = "exam", "考试"
-        SELF_STUDY = "self_study", "自习"
+        SWAP = "swap", "换课"
+        SUBSTITUTE = "substitute", "代课"
+        ABNORMAL = "abnormal", "异常"
 
     class Source(models.TextChoices):
         TEMPLATE = "template", "模板生成"
@@ -185,8 +211,8 @@ class CourseSession(models.Model):
         default=1,
         help_text="写入时对时间段权重的快照，改时间段权重不影响历史",
     )
-    status = models.CharField(
-        max_length=20, choices=Status.choices, default=Status.NORMAL
+    flag = models.CharField(
+        max_length=20, choices=Flag.choices, default=Flag.NORMAL, help_text="异常标记"
     )
     source = models.CharField(
         max_length=20, choices=Source.choices, default=Source.MANUAL
@@ -203,14 +229,3 @@ class CourseSession(models.Model):
 
     def __str__(self):
         return f"{self.date} {self.school_class} {self.time_slot} {self.subject}"
-
-
-class ScheduleLock(models.Model):
-    """全局锁定设置：该日期及之前的课程记录不可改删。"""
-
-    locked_through = models.DateField(null=True, blank=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "锁定设置"
-        verbose_name_plural = "锁定设置"

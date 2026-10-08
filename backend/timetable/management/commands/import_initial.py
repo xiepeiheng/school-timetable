@@ -24,6 +24,7 @@ from django.db import transaction
 
 from timetable import services
 from timetable.models import (
+    ReportGroup,
     ScheduleTemplate,
     SchoolClass,
     Subject,
@@ -87,6 +88,22 @@ SLOT_ROWS = [
 ]
 
 TEACHING_SLOTS = {"早读", "一", "二", "三", "四", "五", "六", "七", "八", "晚一", "晚二", "晚三"}
+
+MORNING_SLOTS = {"一", "二", "三", "四"}
+AFTERNOON_SLOTS = {"五", "六", "七", "八"}
+SELF_STUDY_SLOTS = {"晚一", "晚二", "晚三"}
+
+
+def _report_kind(name: str):
+    if name == "早读":
+        return "early_read"
+    if name in MORNING_SLOTS:
+        return "morning"
+    if name in AFTERNOON_SLOTS:
+        return "afternoon"
+    if name in SELF_STUDY_SLOTS:
+        return "self_study"
+    return None
 
 # 每个班的 (名称, 标签列, 起始列, 早读行号)
 CLASS_LAYOUT = [
@@ -174,6 +191,7 @@ class Command(BaseCommand):
                 name=name, defaults={"sort_order": index, "weight": 1}
             )
         slots = {s.name: s for s in TimeSlot.objects.all()}
+        self._assign_report_groups()
 
         known_teachers = list(Teacher.objects.values_list("name", flat=True))
 
@@ -267,6 +285,23 @@ class Command(BaseCommand):
         )
 
     # ── 辅助 ──
+    def _assign_report_groups(self) -> None:
+        groups = {}
+        for kind, order in [
+            ("early_read", 0),
+            ("morning", 1),
+            ("afternoon", 2),
+            ("self_study", 3),
+        ]:
+            groups[kind], _ = ReportGroup.objects.get_or_create(
+                kind=kind, defaults={"sort_order": order}
+            )
+        for slot in TimeSlot.objects.all():
+            kind = _report_kind(slot.name)
+            if kind and slot.report_group_id != groups[kind].id:
+                slot.report_group = groups[kind]
+                slot.save(update_fields=["report_group"])
+
     @staticmethod
     def _parse_homeroom(header: str) -> str:
         import re

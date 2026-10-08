@@ -8,6 +8,7 @@ export interface GridCell {
   main: string
   sub?: string
   color?: string
+  borderColor?: string
 }
 interface Slot {
   id: number
@@ -24,6 +25,14 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "cell-click", columnKey: string, slot: Slot): void
 }>()
+
+function cellStyle(columnKey: string, slotId: number) {
+  const cell = props.cell(columnKey, slotId)
+  if (cell?.borderColor) {
+    return { boxShadow: `inset 0 0 0 2px ${cell.borderColor}` }
+  }
+  return undefined
+}
 </script>
 
 <template>
@@ -46,6 +55,7 @@ const emit = defineEmits<{
             :key="c.key + '-' + slot.id"
             class="cell"
             :class="{ blocked: props.blocked && props.blocked(c.key) }"
+            :style="cellStyle(c.key, slot.id)"
             @click="emit('cell-click', c.key, slot)"
           >
             <template v-if="props.cell(c.key, slot.id)">

@@ -3,23 +3,19 @@ import { computed, h, ref } from "vue"
 import { RouterLink, useRoute, useRouter } from "vue-router"
 import { NIcon, type MenuOption } from "naive-ui"
 import {
-  BarChartOutline,
   BookOutline,
   CalendarNumberOutline,
   CalendarOutline,
   CopyOutline,
-  DocumentTextOutline,
+  DownloadOutline,
   EyeOutline,
   FolderOutline,
   LinkOutline,
   ListOutline,
-  LockClosedOutline,
   MenuOutline,
   PeopleOutline,
   PersonOutline,
   SchoolOutline,
-  SettingsOutline,
-  StatsChartOutline,
   TimeOutline,
 } from "@vicons/ionicons5"
 import { useStore } from "@/store"
@@ -52,15 +48,7 @@ const menuOptions: MenuOption[] = [
       link("teacher-timetable", "教师课表", PersonOutline),
     ],
   },
-  {
-    key: "report",
-    label: "报表",
-    icon: renderIcon(BarChartOutline),
-    children: [
-      link("teacher-detail", "教师课时明细", DocumentTextOutline),
-      link("teacher-summary", "教师课时汇总", StatsChartOutline),
-    ],
-  },
+  link("export", "导出", DownloadOutline),
   {
     key: "base",
     label: "基础资料",
@@ -73,12 +61,6 @@ const menuOptions: MenuOption[] = [
       link("base-semesters", "学期", CalendarNumberOutline),
       link("base-assignments", "任课关系", LinkOutline),
     ],
-  },
-  {
-    key: "settings",
-    label: "设置",
-    icon: renderIcon(SettingsOutline),
-    children: [link("settings-lock", "锁定设置", LockClosedOutline)],
   },
 ]
 

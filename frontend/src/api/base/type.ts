@@ -30,7 +30,16 @@ export interface TimeSlot {
   name: string
   sort_order: number
   weight: string
+  report_group: number | null
+  report_group_name: string
   is_active: boolean
+}
+
+export interface ReportGroup {
+  id: number
+  kind: string
+  kind_display: string
+  sort_order: number
 }
 
 export interface Semester {

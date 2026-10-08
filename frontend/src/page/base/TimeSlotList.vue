@@ -1,26 +1,40 @@
 <script setup lang="ts">
-import { h, onMounted, ref } from "vue"
+import { computed, h, onMounted, ref } from "vue"
 import { NButton, NSpace, useMessage, type DataTableColumns } from "naive-ui"
 import {
+  reqReportGroupList,
   reqTimeSlotCreate,
   reqTimeSlotDelete,
   reqTimeSlotList,
   reqTimeSlotReorder,
   reqTimeSlotUpdate,
 } from "@/api/base"
-import type { TimeSlot } from "@/api/base/type"
+import type { ReportGroup, TimeSlot } from "@/api/base/type"
 
 const message = useMessage()
 const rows = ref<TimeSlot[]>([])
+const groups = ref<ReportGroup[]>([])
 const loading = ref(false)
 const showModal = ref(false)
 const editing = ref<TimeSlot | null>(null)
-const form = ref<Partial<TimeSlot>>({ name: "", sort_order: 0, weight: "1.00", is_active: true })
+const form = ref<Partial<TimeSlot>>({
+  name: "",
+  sort_order: 0,
+  weight: "1.00",
+  report_group: null,
+  is_active: true,
+})
+
+const groupOptions = computed(() =>
+  groups.value.map((g) => ({ label: g.kind_display, value: g.id })),
+)
 
 async function load() {
   loading.value = true
   try {
-    rows.value = (await reqTimeSlotList()).data
+    const [slots, gs] = await Promise.all([reqTimeSlotList(), reqReportGroupList()])
+    rows.value = slots.data
+    groups.value = gs.data
   } finally {
     loading.value = false
   }
@@ -28,7 +42,13 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  form.value = { name: "", sort_order: rows.value.length, weight: "1.00", is_active: true }
+  form.value = {
+    name: "",
+    sort_order: rows.value.length,
+    weight: "1.00",
+    report_group: null,
+    is_active: true,
+  }
   showModal.value = true
 }
 
@@ -69,6 +89,7 @@ async function move(index: number, delta: number) {
 const columns: DataTableColumns<TimeSlot> = [
   { title: "名称", key: "name" },
   { title: "权重", key: "weight", width: 100 },
+  { title: "报告分组", key: "report_group_name", width: 120, render: (r) => r.report_group_name || "—" },
   { title: "排序", key: "sort_order", width: 80 },
   { title: "启用", key: "is_active", width: 80, render: (r) => (r.is_active ? "是" : "否") },
   {
@@ -121,6 +142,14 @@ onMounted(load)
           </n-form-item>
           <n-form-item label="权重">
             <n-input v-model:value="form.weight" placeholder="默认 1" />
+          </n-form-item>
+          <n-form-item label="报告分组">
+            <n-select
+              v-model:value="form.report_group"
+              :options="groupOptions"
+              clearable
+              placeholder="留空 = 不计入导出"
+            />
           </n-form-item>
           <n-form-item label="排序">
             <n-input-number v-model:value="form.sort_order" :min="0" />

@@ -1,6 +1,7 @@
 import http from "@/axios"
 import type { PaginatedData, ResponseData } from "@/api/common_type"
 import type {
+  ReportGroup,
   SchoolClass,
   Semester,
   Subject,
@@ -56,6 +57,14 @@ export const reqTimeSlotDelete = (id: number) =>
   http.delete<ResponseData<null>>(`/time-slots/${id}/`)
 export const reqTimeSlotReorder = (ids: number[]) =>
   http.post<ResponseData<null>>("/time-slots/reorder/", { ids })
+
+// ── 报告分组（不分页） ──
+export const reqReportGroupList = () =>
+  http.get<ResponseData<ReportGroup[]>>("/report-groups/")
+export const reqReportGroupUpdate = (
+  id: number,
+  data: { sort_order?: number },
+) => http.patch<ResponseData<ReportGroup>>(`/report-groups/${id}/`, data)
 
 // ── 学期（不分页） ──
 export const reqSemesterList = () =>

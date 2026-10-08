@@ -7,14 +7,11 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from django.db import transaction
-from django.db.models import Count, Sum
 
 from common.exceptions import BusinessException
 from timetable.models import (
     CourseSession,
-    ScheduleLock,
     ScheduleTemplate,
-    SchoolClass,
     TeachingAssignment,
     TemplateEntry,
     TimeSlot,
@@ -28,35 +25,6 @@ def daterange(start: date, end: date):
         cur += timedelta(days=1)
 
 
-def get_lock() -> date | None:
-    lock = ScheduleLock.objects.first()
-    return lock.locked_through if lock else None
-
-
-def set_lock(value: date | None) -> ScheduleLock:
-    lock = ScheduleLock.objects.first()
-    if lock is None:
-        lock = ScheduleLock.objects.create(locked_through=value)
-    else:
-        lock.locked_through = value
-        lock.save(update_fields=["locked_through", "updated_at"])
-    return lock
-
-
-def is_locked(target: date, lock: date | None = None) -> bool:
-    lock = get_lock() if lock is None else lock
-    return bool(lock and target <= lock)
-
-
-def assert_range_unlocked(start: date, end: date, action: str = "操作") -> None:
-    """批量操作整段执行：只要范围与锁定区间有交集就整体拒绝，避免半覆盖造成混乱。"""
-    lock = get_lock()
-    if lock and start <= lock:
-        raise BusinessException(
-            message=f"所选范围包含已锁定日期（锁定至 {lock}），{action}已取消"
-        )
-
-
 # ────────────────────────── 生成 / 模板 ──────────────────────────
 
 
@@ -67,8 +35,7 @@ def generate_sessions(
     end: date,
     overwrite: bool = True,
 ) -> dict:
-    """按模板为日期区间生成课程记录。范围涉及锁定日期则整体拒绝。"""
-    assert_range_unlocked(start, end, action="一键排课")
+    """按模板为日期区间生成课程记录。"""
     assignments = {
         (a.school_class_id, a.subject_id): a.teacher_id
         for a in TeachingAssignment.objects.all()
@@ -90,7 +57,7 @@ def generate_sessions(
                 "teacher_id": teacher_id,
                 "weight": entry.time_slot.weight,
                 "source": CourseSession.Source.TEMPLATE,
-                "status": CourseSession.Status.NORMAL,
+                "flag": CourseSession.Flag.NORMAL,
             }
             key = {
                 "date": day,
@@ -111,7 +78,6 @@ def generate_sessions(
     return {
         "created": created,
         "skipped": skipped,
-        "locked_days": 0,
         "updated": updated,
     }
 
@@ -211,7 +177,6 @@ def clear_range(
     school_class_ids: list[int] | None = None,
     time_slot_ids: list[int] | None = None,
 ) -> dict:
-    assert_range_unlocked(start, end, action="清空")
     qs = CourseSession.objects.filter(date__range=(start, end))
     if school_class_ids:
         qs = qs.filter(school_class_id__in=school_class_ids)
@@ -228,9 +193,6 @@ def copy_day(
     school_class_ids: list[int] | None = None,
     time_slot_ids: list[int] | None = None,
 ) -> dict:
-    if is_locked(target):
-        raise BusinessException(message="目标日期已被锁定，不可修改")
-
     source_qs = CourseSession.objects.filter(date=source)
     if school_class_ids:
         source_qs = source_qs.filter(school_class_id__in=school_class_ids)
@@ -253,7 +215,7 @@ def copy_day(
             subject=s.subject,
             teacher=s.teacher,
             weight=s.weight,
-            status=s.status,
+            flag=s.flag,
             source=CourseSession.Source.MANUAL,
             note=s.note,
         )
@@ -264,73 +226,13 @@ def copy_day(
 
 
 @transaction.atomic
-def sync_class(
-    source_date: date,
-    source_class_id: int,
-    target_class_ids: list[int] | None = None,
-    time_slot_ids: list[int] | None = None,
-) -> dict:
-    """把某班某日的课表同步到同日其他班（挖孔后全体执行）。"""
-    if is_locked(source_date):
-        raise BusinessException(message="该日期已被锁定，不可修改")
-
-    source_qs = CourseSession.objects.filter(
-        date=source_date, school_class_id=source_class_id
-    )
-    if time_slot_ids:
-        source_qs = source_qs.filter(time_slot_id__in=time_slot_ids)
-    source_sessions = list(source_qs)
-
-    if target_class_ids:
-        target_classes = list(
-            SchoolClass.objects.filter(id__in=target_class_ids)
-        )
-    else:
-        target_classes = list(
-            SchoolClass.objects.exclude(id=source_class_id)
-        )
-    if not target_classes:
-        raise BusinessException(message="没有可同步的目标班级")
-
-    # 目标班同日、同一组时间段先清空，再按源班铺开
-    conflicts = CourseSession.objects.filter(
-        date=source_date, school_class__in=target_classes
-    )
-    if time_slot_ids:
-        conflicts = conflicts.filter(time_slot_id__in=time_slot_ids)
-    conflicts.delete()
-
-    new_objs = [
-        CourseSession(
-            date=source_date,
-            time_slot=s.time_slot,
-            school_class=target,
-            subject=s.subject,
-            teacher=s.teacher,
-            weight=s.weight,
-            status=s.status,
-            source=CourseSession.Source.MANUAL,
-            note=s.note,
-        )
-        for target in target_classes
-        for s in source_sessions
-    ]
-    CourseSession.objects.bulk_create(new_objs)
-    return {"copied": len(new_objs), "target_classes": len(target_classes)}
-
-
-@transaction.atomic
 def bulk_upsert_sessions(items: list[dict]) -> dict:
     """按格子批量写入/清空课程记录。subject 为空表示清空该格。"""
-    lock = get_lock()
     slot_weight = dict(TimeSlot.objects.values_list("id", "weight"))
     created = updated = deleted = 0
     for item in items:
-        day = item["date"]
-        if is_locked(day, lock):
-            raise BusinessException(message=f"{day} 已被锁定，不可修改")
         key = {
-            "date": day,
+            "date": item["date"],
             "time_slot_id": item["time_slot"],
             "school_class_id": item["school_class"],
         }
@@ -342,7 +244,7 @@ def bulk_upsert_sessions(items: list[dict]) -> dict:
             "subject_id": subject_id,
             "teacher_id": item.get("teacher"),
             "weight": slot_weight.get(item["time_slot"], 1),
-            "status": item.get("status") or CourseSession.Status.NORMAL,
+            "flag": item.get("flag") or CourseSession.Flag.NORMAL,
             "note": item.get("note") or "",
             "source": CourseSession.Source.MANUAL,
         }
@@ -356,83 +258,38 @@ def bulk_upsert_sessions(items: list[dict]) -> dict:
     return {"created": created, "updated": updated, "deleted": deleted}
 
 
-# ────────────────────────── 报表 ──────────────────────────
+@transaction.atomic
+def swap_sessions(id_a: int, id_b: int) -> dict:
+    """交换两条课程记录的「学科 + 教师」，其余字段不动；两格标记为异常并自动写备注。"""
+    if id_a == id_b:
+        raise BusinessException(message="不能与自身交换")
+    try:
+        a = CourseSession.objects.select_related(
+            "school_class", "time_slot", "subject", "teacher"
+        ).get(pk=id_a)
+        b = CourseSession.objects.select_related(
+            "school_class", "time_slot", "subject", "teacher"
+        ).get(pk=id_b)
+    except CourseSession.DoesNotExist:
+        raise BusinessException(message="课程记录不存在")
+
+    def desc(s: CourseSession) -> str:
+        weekday = "一二三四五六日"[s.date.isoweekday() - 1]
+        return f"{s.school_class.name} 周{weekday} {s.time_slot.name} {s.subject.name}"
+
+    desc_a, desc_b = desc(a), desc(b)
+    a.subject, b.subject = b.subject, a.subject
+    a.teacher, b.teacher = b.teacher, a.teacher
+    a.flag = b.flag = CourseSession.Flag.SWAP
+    a.note = f"调课：与 {desc_b} 对调"
+    b.note = f"调课：与 {desc_a} 对调"
+    a.source = b.source = CourseSession.Source.MANUAL
+    a.save(update_fields=["subject", "teacher", "flag", "note", "source"])
+    b.save(update_fields=["subject", "teacher", "flag", "note", "source"])
+    return {"swapped": [a.id, b.id]}
 
 
-def teacher_detail(teacher_id: int, start: date, end: date) -> list[dict]:
-    qs = (
-        CourseSession.objects.filter(
-            teacher_id=teacher_id, date__range=(start, end)
-        )
-        .exclude(status=CourseSession.Status.SUSPENDED)
-        .select_related("time_slot", "school_class", "subject")
-        .order_by("date", "time_slot__sort_order")
-    )
-    return [
-        {
-            "date": s.date,
-            "weekday": s.date.isoweekday(),
-            "time_slot": s.time_slot_id,
-            "time_slot_name": s.time_slot.name,
-            "weight": str(s.weight),
-            "school_class": s.school_class_id,
-            "school_class_name": s.school_class.name,
-            "subject": s.subject_id,
-            "subject_name": s.subject.name,
-            "status": s.status,
-            "note": s.note,
-        }
-        for s in qs
-    ]
-
-
-def teacher_summary(start: date, end: date) -> dict:
-    """每列显示次数；合计 = Σ(每条记录的权重快照)，因此改时间段权重不影响历史。"""
-    slots = list(TimeSlot.objects.all().order_by("sort_order", "id"))
-    slot_ids = [s.id for s in slots]
-
-    rows = (
-        CourseSession.objects.filter(date__range=(start, end))
-        .exclude(status=CourseSession.Status.SUSPENDED)
-        .values("teacher_id", "time_slot_id")
-        .annotate(cnt=Count("id"), wsum=Sum("weight"))
-    )
-
-    from timetable.models import Teacher
-
-    teachers = {t.id: t for t in Teacher.objects.select_related("subject").all()}
-    per_teacher: dict[int, dict] = {}
-    for row in rows:
-        tid = row["teacher_id"]
-        if tid is None:
-            continue
-        entry = per_teacher.setdefault(tid, {"counts": {}, "wsum": {}})
-        sid = row["time_slot_id"]
-        entry["counts"][sid] = row["cnt"]
-        entry["wsum"][sid] = row["wsum"] or 0
-
-    result = []
-    for tid, data in per_teacher.items():
-        teacher = teachers.get(tid)
-        counts = {sid: data["counts"].get(sid, 0) for sid in slot_ids}
-        total = sum(data["wsum"].values(), start=0)
-        result.append(
-            {
-                "teacher": tid,
-                "teacher_name": teacher.name if teacher else "",
-                "subject_name": teacher.subject.name if teacher else "",
-                "counts": counts,
-                "total": f"{total:.2f}",
-            }
-        )
-    result.sort(key=lambda x: x["teacher_name"])
-    return {
-        "slots": [
-            {"id": s.id, "name": s.name, "weight": str(s.weight)}
-            for s in slots
-        ],
-        "teachers": result,
-    }
+# ────────────────────────── 课表查看 ──────────────────────────
 
 
 def class_timetable(class_id: int, start: date, end: date) -> dict:
@@ -458,7 +315,7 @@ def class_timetable(class_id: int, start: date, end: date) -> dict:
                 "subject_name": s.subject.name,
                 "teacher": s.teacher_id,
                 "teacher_name": s.teacher.name if s.teacher else "",
-                "status": s.status,
+                "flag": s.flag,
                 "note": s.note,
             }
             for s in qs
@@ -471,7 +328,6 @@ def teacher_timetable(teacher_id: int, start: date, end: date) -> dict:
         CourseSession.objects.filter(
             teacher_id=teacher_id, date__range=(start, end)
         )
-        .exclude(status=CourseSession.Status.SUSPENDED)
         .select_related("time_slot", "school_class", "subject")
         .order_by("date", "time_slot__sort_order")
     )
@@ -485,6 +341,7 @@ def teacher_timetable(teacher_id: int, start: date, end: date) -> dict:
             "school_class_name": s.school_class.name,
             "subject": s.subject_id,
             "subject_name": s.subject.name,
+            "flag": s.flag,
             "note": s.note,
         }
         for s in qs

@@ -41,16 +41,10 @@ const router = createRouter({
           meta: { title: "教师课表" },
         },
         {
-          path: "teacher-detail",
-          name: "teacher-detail",
-          component: () => import("@/page/report/TeacherDetail.vue"),
-          meta: { title: "教师课时明细" },
-        },
-        {
-          path: "teacher-summary",
-          name: "teacher-summary",
-          component: () => import("@/page/report/TeacherSummary.vue"),
-          meta: { title: "教师课时汇总" },
+          path: "export",
+          name: "export",
+          component: () => import("@/page/export/MonthlyExport.vue"),
+          meta: { title: "导出" },
         },
         {
           path: "base/subjects",
@@ -87,12 +81,6 @@ const router = createRouter({
           name: "base-assignments",
           component: () => import("@/page/base/AssignmentList.vue"),
           meta: { title: "任课关系" },
-        },
-        {
-          path: "settings/lock",
-          name: "settings-lock",
-          component: () => import("@/page/settings/LockSetting.vue"),
-          meta: { title: "锁定设置" },
         },
       ],
     },

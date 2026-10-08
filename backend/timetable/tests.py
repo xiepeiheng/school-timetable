@@ -3,8 +3,10 @@ from datetime import date
 from django.test import TestCase
 
 from timetable import services
+from timetable.exporting import build_monthly_workbook, build_teacher_workbook
 from timetable.models import (
     CourseSession,
+    ReportGroup,
     ScheduleTemplate,
     SchoolClass,
     Subject,
@@ -68,6 +70,7 @@ class GenerateSessionsTest(ServiceTestBase):
         s = CourseSession.objects.get(date=date(2026, 9, 7), time_slot=self.slot_1)
         self.assertEqual(s.teacher, self.t_wang)
         self.assertEqual(s.source, CourseSession.Source.TEMPLATE)
+        self.assertEqual(s.flag, CourseSession.Flag.NORMAL)
 
     def test_fill_blank_keeps_existing(self):
         CourseSession.objects.create(
@@ -85,20 +88,6 @@ class GenerateSessionsTest(ServiceTestBase):
         s = CourseSession.objects.get(date=date(2026, 9, 7), time_slot=self.slot_1)
         self.assertEqual(s.subject, self.chinese)
 
-    def test_locked_range_refused_entirely(self):
-        from common.exceptions import BusinessException
-
-        services.set_lock(date(2026, 9, 7))
-        with self.assertRaises(BusinessException):
-            services.generate_sessions(self.tpl, date(2026, 9, 7), date(2026, 9, 13))
-        # 整体拒绝：周三及之后也不生成
-        self.assertFalse(CourseSession.objects.exists())
-
-    def test_range_after_lock_allowed(self):
-        services.set_lock(date(2026, 9, 7))
-        result = services.generate_sessions(self.tpl, date(2026, 9, 14), date(2026, 9, 20))
-        self.assertGreater(result["created"], 0)
-
 
 class BatchOpsTest(ServiceTestBase):
     def setUp(self):
@@ -112,24 +101,6 @@ class BatchOpsTest(ServiceTestBase):
             CourseSession.objects.filter(date=date(2026, 9, 9)).count(), 2
         )
 
-    def test_copy_day_rejects_locked_target(self):
-        services.set_lock(date(2026, 9, 9))
-        from common.exceptions import BusinessException
-
-        with self.assertRaises(BusinessException):
-            services.copy_day(date(2026, 9, 7), date(2026, 9, 9))
-
-    def test_clear_range_refused_when_overlaps_lock(self):
-        from common.exceptions import BusinessException
-
-        services.set_lock(date(2026, 9, 8))
-        with self.assertRaises(BusinessException):
-            services.clear_range(date(2026, 9, 7), date(2026, 9, 9))
-        # 整体拒绝：周一记录未被删除
-        self.assertTrue(
-            CourseSession.objects.filter(date=date(2026, 9, 7)).exists()
-        )
-
     def test_clear_range(self):
         result = services.clear_range(
             date(2026, 9, 7), date(2026, 9, 7), time_slot_ids=[self.slot_1.id]
@@ -139,16 +110,6 @@ class BatchOpsTest(ServiceTestBase):
             CourseSession.objects.filter(
                 date=date(2026, 9, 7), time_slot=self.slot_1
             ).exists()
-        )
-
-    def test_sync_class(self):
-        result = services.sync_class(date(2026, 9, 7), self.c1.id, [self.c2.id])
-        self.assertEqual(result["copied"], 2)
-        self.assertEqual(
-            CourseSession.objects.filter(
-                date=date(2026, 9, 7), school_class=self.c2
-            ).count(),
-            2,
         )
 
     def test_bulk_upsert_and_clear_cell(self):
@@ -165,6 +126,7 @@ class BatchOpsTest(ServiceTestBase):
         )
         s = CourseSession.objects.get(date=date(2026, 9, 10), time_slot=self.slot_4)
         self.assertEqual(s.teacher, self.t_ma)
+        self.assertEqual(s.weight, 2)  # 快照 slot_4 的权重
         services.bulk_upsert_sessions(
             [
                 {
@@ -180,6 +142,77 @@ class BatchOpsTest(ServiceTestBase):
                 date=date(2026, 9, 10), time_slot=self.slot_4
             ).exists()
         )
+
+    def test_bulk_sets_flag(self):
+        services.bulk_upsert_sessions(
+            [
+                {
+                    "date": date(2026, 9, 11),
+                    "time_slot": self.slot_1.id,
+                    "school_class": self.c1.id,
+                    "subject": self.chinese.id,
+                    "teacher": self.t_ma.id,
+                    "flag": CourseSession.Flag.ABNORMAL,
+                    "note": "考试",
+                }
+            ]
+        )
+        s = CourseSession.objects.get(date=date(2026, 9, 11), time_slot=self.slot_1)
+        self.assertEqual(s.flag, CourseSession.Flag.ABNORMAL)
+        self.assertEqual(s.note, "考试")
+
+
+class SwapSessionsTest(ServiceTestBase):
+    def test_swap_only_subject_and_teacher(self):
+        a = CourseSession.objects.create(
+            date=date(2026, 9, 7),
+            time_slot=self.slot_early,
+            school_class=self.c1,
+            subject=self.chinese,
+            teacher=self.t_ma,
+            weight="1.00",
+        )
+        b = CourseSession.objects.create(
+            date=date(2026, 9, 8),
+            time_slot=self.slot_4,
+            school_class=self.c2,
+            subject=self.math,
+            teacher=self.t_wang,
+            weight="2.00",
+        )
+        services.swap_sessions(a.id, b.id)
+        a.refresh_from_db()
+        b.refresh_from_db()
+        # 学科+教师互换
+        self.assertEqual(a.subject, self.math)
+        self.assertEqual(a.teacher, self.t_wang)
+        self.assertEqual(b.subject, self.chinese)
+        self.assertEqual(b.teacher, self.t_ma)
+        # 位置/权重不动
+        self.assertEqual(a.date, date(2026, 9, 7))
+        self.assertEqual(a.time_slot, self.slot_early)
+        self.assertEqual(str(a.weight), "1.00")
+        self.assertEqual(b.date, date(2026, 9, 8))
+        self.assertEqual(b.time_slot, self.slot_4)
+        self.assertEqual(str(b.weight), "2.00")
+        # 两格都被标记为换课并写了备注
+        self.assertEqual(a.flag, CourseSession.Flag.SWAP)
+        self.assertEqual(b.flag, CourseSession.Flag.SWAP)
+        self.assertTrue(a.note.startswith("调课："))
+        self.assertTrue(b.note.startswith("调课："))
+
+    def test_swap_with_self_rejected(self):
+        from common.exceptions import BusinessException
+
+        a = CourseSession.objects.create(
+            date=date(2026, 9, 7),
+            time_slot=self.slot_early,
+            school_class=self.c1,
+            subject=self.chinese,
+            teacher=self.t_ma,
+        )
+        with self.assertRaises(BusinessException):
+            services.swap_sessions(a.id, a.id)
 
 
 class TemplateFromWeekTest(ServiceTestBase):
@@ -242,37 +275,88 @@ class TemplateOpsTest(ServiceTestBase):
         self.assertEqual(new.entries.count(), before)
 
 
-class SummaryTest(ServiceTestBase):
-    def _add(self, day, slot):
-        services.bulk_upsert_sessions(
-            [
-                {
-                    "date": day,
-                    "time_slot": slot.id,
-                    "school_class": self.c1.id,
-                    "subject": self.chinese.id,
-                    "teacher": self.t_ma.id,
-                }
-            ]
+class ExportTest(TestCase):
+    def setUp(self):
+        self.chinese = Subject.objects.create(name="语文", sort_order=1)
+        self.t_ma = Teacher.objects.create(name="马老师", subject=self.chinese)
+        self.c1 = SchoolClass.objects.create(name="2601", sort_order=1)
+        groups = {}
+        for kind, order in [
+            ("early_read", 0),
+            ("morning", 1),
+            ("afternoon", 2),
+            ("self_study", 3),
+        ]:
+            groups[kind], _ = ReportGroup.objects.get_or_create(
+                kind=kind, defaults={"sort_order": order}
+            )
+        self.slot_early = TimeSlot.objects.create(
+            name="早读", sort_order=0, report_group=groups["early_read"]
+        )
+        self.slot_1 = TimeSlot.objects.create(
+            name="一", sort_order=1, report_group=groups["morning"]
+        )
+        TeachingAssignment.objects.create(
+            school_class=self.c1, subject=self.chinese, teacher=self.t_ma
+        )
+        CourseSession.objects.create(
+            date=date(2026, 9, 7),
+            time_slot=self.slot_1,
+            school_class=self.c1,
+            subject=self.chinese,
+            teacher=self.t_ma,
+        )
+        CourseSession.objects.create(
+            date=date(2026, 9, 7),
+            time_slot=self.slot_early,
+            school_class=self.c1,
+            subject=self.chinese,
+            teacher=self.t_ma,
+        )
+        self.tpl = ScheduleTemplate.objects.create(name="模板")
+        TemplateEntry.objects.create(
+            template=self.tpl,
+            school_class=self.c1,
+            weekday=1,
+            time_slot=self.slot_1,
+            subject=self.chinese,
         )
 
-    def test_weighted_summary_uses_snapshot(self):
-        self._add(date(2026, 9, 7), self.slot_early)  # weight 1
-        self._add(date(2026, 9, 7), self.slot_4)  # weight 2
-        data = services.teacher_summary(date(2026, 9, 1), date(2026, 9, 30))
-        row = next(t for t in data["teachers"] if t["teacher"] == self.t_ma.id)
-        # 1*1 + 1*2 = 3
-        self.assertEqual(row["total"], "3.00")
+    def test_build_workbook(self):
+        wb = build_monthly_workbook(2026, 9, self.tpl)
+        self.assertEqual(
+            wb.sheetnames,
+            [
+                "详细课表",
+                "周一至周五课",
+                "周一至周五自习",
+                "周六日课",
+                "周六日自习",
+                "监考",
+            ],
+        )
+        # 周一至周五课：第一行数据是马老师，周一 9.7 上午 = 1
+        ws = wb["周一至周五课"]
+        self.assertEqual(ws.cell(row=3, column=3).value, "马老师")
+        self.assertEqual(ws.cell(row=3, column=5).value, 1)
+        # 周一至周五自习：早读 = 1
+        ws2 = wb["周一至周五自习"]
+        self.assertEqual(ws2.cell(row=3, column=5).value, 1)
+        # 监考只有 4 列
+        self.assertEqual(wb["监考"].max_column, 4)
 
-    def test_changing_slot_weight_does_not_change_history(self):
-        self._add(date(2026, 9, 7), self.slot_4)  # 快照权重 2
-        self.slot_4.weight = 5
-        self.slot_4.save()
-        data = services.teacher_summary(date(2026, 9, 1), date(2026, 9, 30))
-        row = next(t for t in data["teachers"] if t["teacher"] == self.t_ma.id)
-        self.assertEqual(row["total"], "2.00")  # 历史不变
-
-        self._add(date(2026, 9, 8), self.slot_4)  # 新记录用新权重 5
-        data2 = services.teacher_summary(date(2026, 9, 1), date(2026, 9, 30))
-        row2 = next(t for t in data2["teachers"] if t["teacher"] == self.t_ma.id)
-        self.assertEqual(row2["total"], "7.00")
+    def test_teacher_workbook(self):
+        wb = build_teacher_workbook(date(2026, 9, 7), date(2026, 9, 8))
+        self.assertIn("语文-马老师", wb.sheetnames)
+        ws = wb["语文-马老师"]
+        headers = [
+            ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)
+        ]
+        self.assertEqual(headers[0], "日期")
+        self.assertEqual(headers[1], "星期")
+        self.assertEqual(headers[-1], "合计")
+        col_one = headers.index("一") + 1
+        # 9.7 第一节是 2601
+        self.assertEqual(ws.cell(row=2, column=col_one).value, "2601")
+        # 9.8（第二天）没有课，格子为空
+        self.assertIsNone(ws.cell(row=3, column=col_one).value)

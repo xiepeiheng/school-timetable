@@ -20,3 +20,6 @@ dist/
 .vscode/
 .playwright-mcp/
 *.log
+
+# 不提交的本地资料 / 导出
+不提交文件/
