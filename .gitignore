@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+*.pid
 .venv/
 db.sqlite3
 staticfiles/
