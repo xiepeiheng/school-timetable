@@ -12,6 +12,8 @@ from common.exceptions import BusinessException
 from timetable.models import (
     CourseSession,
     ScheduleTemplate,
+    SchoolClass,
+    Subject,
     TeachingAssignment,
     TemplateEntry,
     TimeSlot,
@@ -223,6 +225,158 @@ def copy_day(
     ]
     CourseSession.objects.bulk_create(new_objs)
     return {"copied": len(new_objs)}
+
+
+@transaction.atomic
+def apply_template_cell(
+    template_id: int,
+    target: date,
+    time_slot_id: int,
+    source_weekday: int,
+    school_class_ids: list[int] | None = None,
+    overwrite: bool = False,
+) -> dict:
+    """把模板中某星期几的某个节次，填充到目标日期的同一个节次。"""
+    try:
+        template = ScheduleTemplate.objects.get(pk=template_id)
+    except ScheduleTemplate.DoesNotExist:
+        raise BusinessException(message="模板不存在")
+    try:
+        slot = TimeSlot.objects.get(pk=time_slot_id)
+    except TimeSlot.DoesNotExist:
+        raise BusinessException(message="时间段不存在")
+    if not slot.is_active:
+        raise BusinessException(message="时间段已停用")
+
+    entries = list(
+        TemplateEntry.objects.filter(
+            template=template,
+            weekday=source_weekday,
+            time_slot=slot,
+            school_class__is_active=True,
+        )
+        .select_related("school_class", "subject")
+        .order_by("school_class__sort_order", "id")
+    )
+    if school_class_ids:
+        wanted = set(school_class_ids)
+        entries = [e for e in entries if e.school_class_id in wanted]
+
+    assignments = {
+        (a.school_class_id, a.subject_id): a.teacher_id
+        for a in TeachingAssignment.objects.all()
+    }
+    created = updated = skipped = 0
+    for entry in entries:
+        defaults = {
+            "subject": entry.subject,
+            "teacher_id": assignments.get(
+                (entry.school_class_id, entry.subject_id)
+            ),
+            "weight": slot.weight,
+            "flag": CourseSession.Flag.NORMAL,
+            "source": CourseSession.Source.MANUAL,
+            "note": "",
+        }
+        key = {
+            "date": target,
+            "time_slot": slot,
+            "school_class": entry.school_class,
+        }
+        if overwrite:
+            _, is_created = CourseSession.objects.update_or_create(
+                **key, defaults=defaults
+            )
+            if is_created:
+                created += 1
+            else:
+                updated += 1
+        else:
+            _, is_created = CourseSession.objects.get_or_create(
+                **key, defaults=defaults
+            )
+            if is_created:
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "matched": len(entries),
+    }
+
+
+@transaction.atomic
+def apply_subject_cell(
+    target: date,
+    time_slot_id: int,
+    subject_id: int,
+    school_class_ids: list[int] | None = None,
+    overwrite: bool = False,
+) -> dict:
+    """把指定学科批量填充到某日某节次的班级范围。"""
+    try:
+        slot = TimeSlot.objects.get(pk=time_slot_id)
+    except TimeSlot.DoesNotExist:
+        raise BusinessException(message="时间段不存在")
+    if not slot.is_active:
+        raise BusinessException(message="时间段已停用")
+    try:
+        subject = Subject.objects.get(pk=subject_id)
+    except Subject.DoesNotExist:
+        raise BusinessException(message="学科不存在")
+
+    classes = SchoolClass.objects.filter(is_active=True)
+    if school_class_ids:
+        classes = classes.filter(id__in=school_class_ids)
+    classes = list(classes.order_by("sort_order", "id"))
+
+    assignments = {
+        (a.school_class_id, a.subject_id): a.teacher_id
+        for a in TeachingAssignment.objects.all()
+    }
+    created = updated = skipped = missing_teacher = 0
+    for klass in classes:
+        teacher_id = assignments.get((klass.id, subject.id))
+        defaults = {
+            "subject": subject,
+            "teacher_id": teacher_id,
+            "weight": slot.weight,
+            "flag": CourseSession.Flag.NORMAL,
+            "source": CourseSession.Source.MANUAL,
+            "note": "",
+        }
+        key = {"date": target, "time_slot": slot, "school_class": klass}
+        if overwrite:
+            _, is_created = CourseSession.objects.update_or_create(
+                **key, defaults=defaults
+            )
+            if is_created:
+                created += 1
+            else:
+                updated += 1
+            if teacher_id is None:
+                missing_teacher += 1
+        else:
+            _, is_created = CourseSession.objects.get_or_create(
+                **key, defaults=defaults
+            )
+            if is_created:
+                created += 1
+                if teacher_id is None:
+                    missing_teacher += 1
+            else:
+                skipped += 1
+
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "matched": len(classes),
+        "missing_teacher": missing_teacher,
+    }
 
 
 @transaction.atomic

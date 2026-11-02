@@ -17,6 +17,8 @@ import type {
   TimeSlot,
 } from "@/api/base/type"
 import {
+  reqSessionApplySubjectCell,
+  reqSessionApplyTemplateCell,
   reqSessionBulk,
   reqSessionClear,
   reqSessionCopyDay,
@@ -55,6 +57,9 @@ const FLAG_BORDER: Record<string, string> = {
   substitute: "#1E88E5",
   abnormal: "#E53935",
 }
+const WEEKDAY_OPTIONS = ["一", "二", "三", "四", "五", "六", "日"].map(
+  (name, index) => ({ label: `周${name}`, value: index + 1 }),
+)
 
 const TEACHING_SLOT_NAMES = [
   "早读",
@@ -100,6 +105,11 @@ const subjectMap = computed(() =>
 )
 const classOptions = computed(() =>
   classes.value.map((c) => ({ label: c.name, value: c.id })),
+)
+const activeClassOptions = computed(() =>
+  classes.value
+    .filter((c) => c.is_active)
+    .map((c) => ({ label: c.name, value: c.id })),
 )
 const defaultTeacher = computed(() => {
   const map: Record<string, number> = {}
@@ -151,6 +161,11 @@ function cellKey(date: string, slotId: number) {
 
 function cellSession(date: string, slotId: number) {
   return sessions.value[cellKey(date, slotId)]
+}
+
+function isoWeekday(date: string): number {
+  const day = new Date(`${date}T00:00:00`).getDay()
+  return day === 0 ? 7 : day
 }
 
 async function loadBase() {
@@ -305,6 +320,122 @@ async function clearCell() {
   cellForm.value.subject = null
   cellForm.value.note = ""
   await saveCell()
+}
+
+// ── 批量补格（模板 / 指定学科） ──
+const batchCellModal = ref(false)
+const batchCellForm = ref<{
+  source: "template" | "subject"
+  template: number | null
+  source_weekday: number
+  subject: number | null
+  classMode: ClassMode
+  classIds: number[]
+  overwrite: boolean
+}>({
+  source: "template",
+  template: null,
+  source_weekday: 1,
+  subject: null,
+  classMode: "current",
+  classIds: [],
+  overwrite: false,
+})
+
+function openBatchCell() {
+  if (!templates.value.length && !subjects.value.length)
+    return message.warning("暂无可用的模板或学科")
+  const preferred =
+    templates.value.find((t) => t.is_default) || templates.value[0]
+  batchCellForm.value = {
+    source: templates.value.length ? "template" : "subject",
+    template: preferred?.id ?? null,
+    source_weekday: isoWeekday(cellForm.value.date),
+    subject: null,
+    classMode: "current",
+    classIds: [],
+    overwrite: false,
+  }
+  cellModal.value = false
+  batchCellModal.value = true
+}
+
+function validateBatchCell() {
+  const form = batchCellForm.value
+  if (form.source === "template" && !form.template) {
+    message.warning("请选择模板")
+    return false
+  }
+  if (form.source === "subject" && !form.subject) {
+    message.warning("请选择学科")
+    return false
+  }
+  if (form.classMode === "current" && !selectedClass.value) {
+    message.warning("请先选择当前班级")
+    return false
+  }
+  if (form.classMode === "custom" && !form.classIds.length) {
+    message.warning("请选择要填充的班级")
+    return false
+  }
+  return true
+}
+
+async function doApplyBatchCell() {
+  if (!validateBatchCell()) return
+  const form = batchCellForm.value
+  const classIds = resolveClassIds(form.classMode, form.classIds)
+  const common = {
+    target_date: cellForm.value.date,
+    time_slot: cellForm.value.slotId,
+    ...(classIds ? { school_classes: classIds } : {}),
+    overwrite: form.overwrite,
+  }
+  const res =
+    form.source === "template"
+      ? await reqSessionApplyTemplateCell({
+          ...common,
+          template: form.template!,
+          source_weekday: form.source_weekday,
+        })
+      : await reqSessionApplySubjectCell({
+          ...common,
+          subject: form.subject!,
+        })
+  const { created, updated, skipped, matched } = res.data
+  if (!matched) {
+    message.warning("没有可填充的课程")
+  } else {
+    let text = `已填充：新增 ${created}，更新 ${updated}，跳过 ${skipped}`
+    const missing = "missing_teacher" in res.data ? res.data.missing_teacher : 0
+    if (missing) text += `；${missing} 个班缺少任课关系，教师留空`
+    message.success(text)
+  }
+  batchCellModal.value = false
+  reload()
+}
+
+function confirmApplyBatchCell() {
+  if (!validateBatchCell()) return
+  const form = batchCellForm.value
+  const tplName =
+    templates.value.find((t) => t.id === form.template)?.name || "—"
+  const weekday =
+    WEEKDAY_OPTIONS.find((o) => o.value === form.source_weekday)?.label || "—"
+  const subjectName =
+    subjects.value.find((s) => s.id === form.subject)?.name || "—"
+  const sourceText =
+    form.source === "template"
+      ? `按模板「${tplName}」中${weekday}的该节次`
+      : `统一指定学科「${subjectName}」`
+  const action = form.overwrite ? "覆盖已有课程" : "仅补空"
+  confirmDanger(
+    `将${sourceText}，${action}填充 ${classScopeLabel(
+      form.classMode,
+      form.classIds,
+    )} 的 ${cellForm.value.date} ${cellForm.value.slotName}，确定？`,
+    doApplyBatchCell,
+  )
 }
 
 // ── 二次确认 ──
@@ -623,9 +754,92 @@ onMounted(async () => {
         </n-form>
         <template #footer>
           <n-space justify="end">
+            <n-button type="info" ghost @click="openBatchCell">
+              批量补格
+            </n-button>
             <n-button type="error" ghost @click="clearCell">清空该格</n-button>
             <n-button @click="cellModal = false">取消</n-button>
             <n-button type="primary" @click="saveCell">保存</n-button>
+          </n-space>
+        </template>
+      </n-card>
+    </n-modal>
+
+    <!-- 批量补格 -->
+    <n-modal v-model:show="batchCellModal">
+      <n-card
+        style="width: 560px; max-width: 94vw"
+        :title="`批量补格：${cellForm.date} ${cellForm.slotName}`"
+      >
+        <n-alert type="info" :bordered="false" style="margin-bottom: 12px">
+          按模板中某个星期几的该节次，或直接指定学科，填充当前格子对应的日期和节次。
+          默认只补空格；模板中没有的班级会跳过。
+        </n-alert>
+        <n-form>
+          <n-form-item label="填充来源">
+            <n-radio-group v-model:value="batchCellForm.source">
+              <n-radio value="template">按模板</n-radio>
+              <n-radio value="subject">指定学科</n-radio>
+            </n-radio-group>
+          </n-form-item>
+          <template v-if="batchCellForm.source === 'template'">
+            <n-form-item label="模板">
+              <n-select
+                v-model:value="batchCellForm.template"
+                :options="templates.map((t) => ({ label: t.name, value: t.id }))"
+              />
+            </n-form-item>
+            <n-form-item label="模板星期">
+              <n-select
+                v-model:value="batchCellForm.source_weekday"
+                :options="WEEKDAY_OPTIONS"
+                style="width: 160px"
+              />
+            </n-form-item>
+          </template>
+          <n-form-item v-else label="学科">
+            <n-select
+              v-model:value="batchCellForm.subject"
+              :options="subjects.map((s) => ({ label: s.name, value: s.id }))"
+            />
+          </n-form-item>
+          <n-form-item label="班级范围">
+            <n-radio-group v-model:value="batchCellForm.classMode">
+              <n-radio value="current">当前班</n-radio>
+              <n-radio value="all">全体班</n-radio>
+              <n-radio value="custom">自选班</n-radio>
+            </n-radio-group>
+          </n-form-item>
+          <n-form-item
+            v-if="batchCellForm.classMode === 'custom'"
+            label="选择班级"
+          >
+            <n-select
+              v-model:value="batchCellForm.classIds"
+              :options="activeClassOptions"
+              multiple
+              placeholder="请选择班级"
+            />
+          </n-form-item>
+          <n-form-item label="已有课程">
+            <n-checkbox v-model:checked="batchCellForm.overwrite">
+              覆盖已有课程（不勾选则仅补空）
+            </n-checkbox>
+          </n-form-item>
+          <n-alert
+            v-if="batchCellForm.source === 'subject'"
+            type="default"
+            :bordered="false"
+          >
+            教师按各班的任课关系自动匹配；缺少任课关系时教师留空。
+          </n-alert>
+        </n-form>
+        <template #footer>
+          <n-space justify="end">
+            <n-button @click="batchCellModal = false">取消</n-button>
+            <n-button type="primary" @click="confirmApplyBatchCell">
+              填充
+            </n-button>
           </n-space>
         </template>
       </n-card>

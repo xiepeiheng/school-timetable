@@ -316,6 +316,27 @@ class CopyDaySerializer(serializers.Serializer):
     )
 
 
+class ApplyTemplateCellSerializer(serializers.Serializer):
+    template = serializers.IntegerField()
+    target_date = serializers.DateField()
+    time_slot = serializers.IntegerField()
+    source_weekday = serializers.IntegerField(min_value=1, max_value=7)
+    school_classes = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list
+    )
+    overwrite = serializers.BooleanField(default=False)
+
+
+class ApplySubjectCellSerializer(serializers.Serializer):
+    target_date = serializers.DateField()
+    time_slot = serializers.IntegerField()
+    subject = serializers.IntegerField()
+    school_classes = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list
+    )
+    overwrite = serializers.BooleanField(default=False)
+
+
 # ────────────────────────── 课表查看 ──────────────────────────
 
 

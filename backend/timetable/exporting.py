@@ -1,12 +1,12 @@
-"""月度课时导出：生成「高一（1）部课时（分班后）」式的工作簿（6 个页签）。
+"""课时核算导出：按起止日期生成「高一（1）部课时」式的工作簿（5 个页签）。
 
-- 周一至周五课 / 周一至周五自习 / 周六日课 / 周六日自习：来自该月实际课程记录
-- 详细课表：来自所选模板
-- 监考：仅保留教师列
+- 周一至周五课 / 周一至周五自习 / 周六日课 / 周六日自习：来自区间内实际课程记录
+- 课时汇总：每位老师的课/自习节数与按系数合计
 """
 
 from collections import defaultdict
 from datetime import date, timedelta
+from decimal import Decimal
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -17,7 +17,6 @@ from timetable.models import (
     ReportGroup,
     SchoolClass,
     Teacher,
-    TeachingAssignment,
     TimeSlot,
 )
 
@@ -26,25 +25,11 @@ WEEKDAY_CN = ["一", "二", "三", "四", "五", "六", "日"]
 # 各表的固定子列顺序（按 kind）
 COURSE_KINDS = [ReportGroup.Kind.MORNING, ReportGroup.Kind.AFTERNOON]
 STUDY_KINDS = [ReportGroup.Kind.EARLY_READ, ReportGroup.Kind.SELF_STUDY]
-DETAIL_KINDS = [
-    ReportGroup.Kind.MORNING,
-    ReportGroup.Kind.AFTERNOON,
-    ReportGroup.Kind.EARLY_READ,
-    ReportGroup.Kind.SELF_STUDY,
-]
 KIND_LABEL = dict(ReportGroup.Kind.choices)
 
 _THIN = Side(style="thin", color="999999")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-
-def _month_bounds(year: int, month: int) -> tuple[date, date]:
-    start = date(year, month, 1)
-    end = (
-        date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-    ) - timedelta(days=1)
-    return start, end
 
 
 def _is_weekend(day: date) -> bool:
@@ -55,17 +40,24 @@ def _date_label(day: date) -> str:
     return f"周{WEEKDAY_CN[day.isoweekday() - 1]} {day.month}.{day.day}"
 
 
-def _finish(ws, nrows: int, ncols: int, freeze: str | None = "E3") -> None:
+def _finish(
+    ws,
+    nrows: int,
+    ncols: int,
+    freeze: str | None = "E3",
+    header_rows: int = 2,
+) -> None:
     for r in range(1, nrows + 1):
         for c in range(1, ncols + 1):
             cell = ws.cell(row=r, column=c)
             cell.border = _BORDER
             cell.alignment = _CENTER
-    for r in (1, 2):
+    for r in range(1, header_rows + 1):
         for c in range(1, ncols + 1):
             ws.cell(row=r, column=c).font = Font(bold=True)
     ws.row_dimensions[1].height = 22
-    ws.row_dimensions[2].height = 18
+    if header_rows >= 2:
+        ws.row_dimensions[2].height = 18
     ws.column_dimensions["A"].width = 6
     ws.column_dimensions["B"].width = 9
     ws.column_dimensions["C"].width = 10
@@ -76,8 +68,7 @@ def _finish(ws, nrows: int, ncols: int, freeze: str | None = "E3") -> None:
         ws.freeze_panes = freeze
 
 
-def build_monthly_workbook(year: int, month: int, template) -> openpyxl.Workbook:
-    start, end = _month_bounds(year, month)
+def build_monthly_workbook(start: date, end: date) -> openpyxl.Workbook:
     slot_kind = dict(TimeSlot.objects.values_list("id", "report_group__kind"))
 
     sessions = CourseSession.objects.filter(
@@ -86,6 +77,10 @@ def build_monthly_workbook(year: int, month: int, template) -> openpyxl.Workbook
     count: dict[tuple, int] = defaultdict(int)  # (tid, date, kind) -> 次数
     date_kind: set[tuple] = set()  # 该日期该分类是否存在课程
     teacher_classes: dict[int, set[int]] = defaultdict(set)
+    course_count: dict[int, int] = defaultdict(int)
+    study_count: dict[int, int] = defaultdict(int)
+    course_weight: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    study_weight: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
     for s in sessions:
         kind = slot_kind.get(s.time_slot_id)
         if not kind:
@@ -93,24 +88,14 @@ def build_monthly_workbook(year: int, month: int, template) -> openpyxl.Workbook
         count[(s.teacher_id, s.date, kind)] += 1
         date_kind.add((s.date, kind))
         teacher_classes[s.teacher_id].add(s.school_class_id)
+        if kind in COURSE_KINDS:
+            course_count[s.teacher_id] += 1
+            course_weight[s.teacher_id] += s.weight
+        elif kind in STUDY_KINDS:
+            study_count[s.teacher_id] += 1
+            study_weight[s.teacher_id] += s.weight
 
-    assign = {
-        (a.school_class_id, a.subject_id): a.teacher_id
-        for a in TeachingAssignment.objects.all()
-    }
-    tpl_count: dict[tuple, int] = defaultdict(int)  # (tid, weekday, kind) -> 次数
-    tpl_classes: dict[int, set[int]] = defaultdict(set)
-    for entry in template.entries.select_related("time_slot").all():
-        kind = slot_kind.get(entry.time_slot_id)
-        if not kind:
-            continue
-        tid = assign.get((entry.school_class_id, entry.subject_id))
-        if not tid:
-            continue
-        tpl_count[(tid, entry.weekday, kind)] += 1
-        tpl_classes[tid].add(entry.school_class_id)
-
-    teacher_ids = set(teacher_classes) | set(tpl_classes)
+    teacher_ids = set(teacher_classes)
     teachers = list(
         Teacher.objects.filter(id__in=teacher_ids, is_active=True).select_related(
             "subject"
@@ -121,8 +106,10 @@ def build_monthly_workbook(year: int, month: int, template) -> openpyxl.Workbook
     class_order = dict(SchoolClass.objects.values_list("id", "sort_order"))
 
     def classes_str(tid: int) -> str:
-        ids = teacher_classes.get(tid, set()) | tpl_classes.get(tid, set())
-        ids = sorted(ids, key=lambda i: (class_order.get(i, 0), i))
+        ids = sorted(
+            teacher_classes.get(tid, set()),
+            key=lambda i: (class_order.get(i, 0), i),
+        )
         return "、".join(class_names.get(i, "") for i in ids)
 
     rows = [
@@ -138,7 +125,6 @@ def build_monthly_workbook(year: int, month: int, template) -> openpyxl.Workbook
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    _write_detail_sheet(wb.create_sheet("详细课表"), rows, tpl_count)
     _write_date_sheet(
         wb.create_sheet("周一至周五课"), rows, count, date_kind, COURSE_KINDS, False
     )
@@ -151,7 +137,14 @@ def build_monthly_workbook(year: int, month: int, template) -> openpyxl.Workbook
     _write_date_sheet(
         wb.create_sheet("周六日自习"), rows, count, date_kind, STUDY_KINDS, True
     )
-    _write_proctor_sheet(wb.create_sheet("监考"), rows)
+    _write_summary_sheet(
+        wb.create_sheet("课时汇总"),
+        rows,
+        course_count,
+        study_count,
+        course_weight,
+        study_weight,
+    )
 
     return wb
 
@@ -202,51 +195,52 @@ def _write_date_sheet(ws, rows, count, date_kind, kinds, weekend):
     _finish(ws, 2 + len(rows), total_col)
 
 
-def _write_detail_sheet(ws, rows, tpl_count):
-    for col, head in enumerate(["序号", "学科", "姓名", "班级"], start=1):
+def _write_summary_sheet(
+    ws,
+    rows,
+    course_count,
+    study_count,
+    course_weight,
+    study_weight,
+):
+    headers = [
+        "序号",
+        "学科",
+        "姓名",
+        "班级",
+        "课节数",
+        "自习节数",
+        "合计",
+        "课系数合计",
+        "自习系数合计",
+        "系数合计",
+    ]
+    for col, head in enumerate(headers, start=1):
         ws.cell(row=1, column=col, value=head)
-        ws.merge_cells(start_row=1, start_column=col, end_row=2, end_column=col)
-
-    col = 5
-    for weekday in range(1, 8):
-        first = col
-        for kind in DETAIL_KINDS:
-            ws.cell(row=2, column=col, value=KIND_LABEL[kind])
-            col += 1
-        ws.merge_cells(start_row=1, start_column=first, end_row=1, end_column=col - 1)
-        ws.cell(row=1, column=first, value=f"周{WEEKDAY_CN[weekday - 1]}")
-    ncols = col - 1
 
     for i, row in enumerate(rows):
-        r = 3 + i
+        r = 2 + i
+        tid = row["tid"]
+        cc = course_count.get(tid, 0)
+        sc = study_count.get(tid, 0)
+        cw = course_weight.get(tid, Decimal("0"))
+        sw = study_weight.get(tid, Decimal("0"))
         ws.cell(row=r, column=1, value=i + 1)
         ws.cell(row=r, column=2, value=row["subject"])
         ws.cell(row=r, column=3, value=row["name"])
         ws.cell(row=r, column=4, value=row["classes"])
-        c = 5
-        for weekday in range(1, 8):
-            for kind in DETAIL_KINDS:
-                v = tpl_count.get((row["tid"], weekday, kind), 0)
-                if v:
-                    ws.cell(row=r, column=c, value=v)
-                c += 1
+        ws.cell(row=r, column=5, value=cc)
+        ws.cell(row=r, column=6, value=sc)
+        ws.cell(row=r, column=7, value=cc + sc)
+        ws.cell(row=r, column=8, value=float(cw))
+        ws.cell(row=r, column=9, value=float(sw))
+        ws.cell(row=r, column=10, value=float(cw + sw))
+        for c in (8, 9, 10):
+            ws.cell(row=r, column=c).number_format = "0.00"
 
-    _finish(ws, 2 + len(rows), ncols)
-
-
-def _write_proctor_sheet(ws, rows):
-    for col, head in enumerate(["序号", "学科", "姓名", "班级"], start=1):
-        ws.cell(row=1, column=col, value=head)
-        ws.merge_cells(start_row=1, start_column=col, end_row=2, end_column=col)
-
-    for i, row in enumerate(rows):
-        r = 3 + i
-        ws.cell(row=r, column=1, value=i + 1)
-        ws.cell(row=r, column=2, value=row["subject"])
-        ws.cell(row=r, column=3, value=row["name"])
-        ws.cell(row=r, column=4, value=row["classes"])
-
-    _finish(ws, 2 + len(rows), 4, freeze="A3")
+    _finish(ws, 1 + len(rows), len(headers), freeze="A2", header_rows=1)
+    for c in range(5, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 11
 
 
 # ────────────────────────── 教师个人课表 ──────────────────────────
@@ -319,21 +313,30 @@ def build_teacher_workbook(start: date, end: date) -> openpyxl.Workbook:
 
 
 def _write_teacher_sheet(ws, teacher, days, slots, sess_map):
-    headers = ["日期", "星期"] + [s.name for s in slots] + ["合计"]
+    headers = ["日期", "星期"] + [s.name for s in slots] + ["合计", "按系数合计"]
     for col, head in enumerate(headers, start=1):
         ws.cell(row=1, column=col, value=head)
     ncols = len(headers)
+    slot_end_col = 2 + len(slots)
+    total_col = slot_end_col + 1
+    weight_col = slot_end_col + 2
 
+    slot_counts = [0] * len(slots)
+    slot_weights = [Decimal("0")] * len(slots)
     flagged = []
     for i, day in enumerate(days):
         r = 2 + i
         ws.cell(row=r, column=1, value=f"{day.month}.{day.day}")
         ws.cell(row=r, column=2, value=f"周{WEEKDAY_CN[day.isoweekday() - 1]}")
+        row_weight = Decimal("0")
         for j, slot in enumerate(slots):
             session = sess_map.get((day, slot.id))
             if not session:
                 continue
             cell = ws.cell(row=r, column=3 + j, value=session.school_class.name)
+            slot_counts[j] += 1
+            slot_weights[j] += session.weight
+            row_weight += session.weight
             if session.flag and session.flag != "normal":
                 fill = FLAG_FILL.get(session.flag)
                 if fill:
@@ -349,15 +352,34 @@ def _write_teacher_sheet(ws, teacher, days, slots, sess_map):
                 )
         ws.cell(
             row=r,
-            column=ncols,
+            column=total_col,
             value=(
                 f"=COUNTA({get_column_letter(3)}{r}:"
-                f"{get_column_letter(ncols - 1)}{r})"
+                f"{get_column_letter(slot_end_col)}{r})"
             ),
         )
+        ws.cell(row=r, column=weight_col, value=float(row_weight))
+        ws.cell(row=r, column=weight_col).number_format = "0.00"
+
+    data_end = 1 + len(days)
+    total_row = data_end + 1
+    weight_row = data_end + 2
+    ws.cell(row=total_row, column=1, value="合计")
+    ws.cell(row=weight_row, column=1, value="按系数合计")
+    for j in range(len(slots)):
+        ws.cell(row=total_row, column=3 + j, value=slot_counts[j])
+        ws.cell(row=weight_row, column=3 + j, value=float(slot_weights[j]))
+        ws.cell(row=weight_row, column=3 + j).number_format = "0.00"
+    ws.cell(row=total_row, column=total_col, value=sum(slot_counts))
+    ws.cell(
+        row=weight_row,
+        column=weight_col,
+        value=float(sum(slot_weights, Decimal("0"))),
+    )
+    ws.cell(row=weight_row, column=weight_col).number_format = "0.00"
 
     # 空一行后列出所有带标记的条目
-    note_start = 2 + len(days) + 1
+    note_start = data_end + 4
     ws.cell(row=note_start, column=1, value="标注说明")
     for col, head in enumerate(["日期", "节次", "班级", "标记", "备注"], start=1):
         ws.cell(row=note_start + 1, column=col, value=head)
@@ -369,7 +391,7 @@ def _write_teacher_sheet(ws, teacher, days, slots, sess_map):
         ws.cell(row=r, column=4, value=flag)
         ws.cell(row=r, column=5, value=note or "")
 
-    grid_rows = 1 + len(days)
+    grid_rows = data_end + 2
     for r in range(1, grid_rows + 1):
         for c in range(1, ncols + 1):
             cell = ws.cell(row=r, column=c)
@@ -378,6 +400,9 @@ def _write_teacher_sheet(ws, teacher, days, slots, sess_map):
         ws.cell(row=r, column=ncols).font = Font(bold=True)
     for c in range(1, ncols + 1):
         ws.cell(row=1, column=c).font = Font(bold=True)
+    for c in (1, total_col, weight_col):
+        ws.cell(row=total_row, column=c).font = Font(bold=True)
+        ws.cell(row=weight_row, column=c).font = Font(bold=True)
 
     list_end = note_start + 1 + len(flagged)
     for r in range(note_start, list_end + 1):
@@ -389,7 +414,7 @@ def _write_teacher_sheet(ws, teacher, days, slots, sess_map):
         ws.cell(row=note_start + 1, column=c).font = Font(bold=True)
 
     ws.row_dimensions[1].height = 22
-    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["A"].width = 12
     ws.column_dimensions["B"].width = 6
     for c in range(3, ncols + 1):
         ws.column_dimensions[get_column_letter(c)].width = 10

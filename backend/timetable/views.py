@@ -23,6 +23,8 @@ from timetable.models import (
     TimeSlot,
 )
 from timetable.serializers import (
+    ApplySubjectCellSerializer,
+    ApplyTemplateCellSerializer,
     ApplyTemplateSerializer,
     ClearClassAssignmentsSerializer,
     ClearRangeSerializer,
@@ -356,6 +358,35 @@ class CourseSessionViewSet(viewsets.ModelViewSet):
         )
         return success_response(data=result, message="已复制")
 
+    @action(detail=False, methods=["post"], url_path="apply-template-cell")
+    def apply_template_cell(self, request):
+        serializer = ApplyTemplateCellSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        result = services.apply_template_cell(
+            template_id=data["template"],
+            target=data["target_date"],
+            time_slot_id=data["time_slot"],
+            source_weekday=data["source_weekday"],
+            school_class_ids=data.get("school_classes") or None,
+            overwrite=data["overwrite"],
+        )
+        return success_response(data=result, message="已按模板填充")
+
+    @action(detail=False, methods=["post"], url_path="apply-subject-cell")
+    def apply_subject_cell(self, request):
+        serializer = ApplySubjectCellSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        result = services.apply_subject_cell(
+            target=data["target_date"],
+            time_slot_id=data["time_slot"],
+            subject_id=data["subject"],
+            school_class_ids=data.get("school_classes") or None,
+            overwrite=data["overwrite"],
+        )
+        return success_response(data=result, message="已批量填充")
+
 
 class TimetableViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"], url_path="class-timetable")
@@ -388,27 +419,23 @@ class TimetableViewSet(viewsets.ViewSet):
 class ExportViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def monthly(self, request):
-        month = request.query_params.get("month", "")
-        template_id = request.query_params.get("template")
+        start = request.query_params.get("start", "")
+        end = request.query_params.get("end", "")
         try:
-            year_s, month_s = month.split("-")
-            year, mon = int(year_s), int(month_s)
-            if not 1 <= mon <= 12:
-                raise ValueError
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
         except ValueError:
-            raise BusinessException(message="月份格式应为 YYYY-MM")
+            raise BusinessException(message="日期格式应为 YYYY-MM-DD")
+        if start_date > end_date:
+            raise BusinessException(message="起始日期不能晚于结束日期")
 
-        template = ScheduleTemplate.objects.filter(pk=template_id).first()
-        if not template:
-            raise NotFoundException(message="模板不存在")
-
-        workbook = build_monthly_workbook(year, mon, template)
+        workbook = build_monthly_workbook(start_date, end_date)
         response = HttpResponse(
             content_type=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         )
-        filename = f"{year}年{mon}月高一（1）部课时（分班后）.xlsx"
+        filename = f"高一（1）部课时_{start}_{end}.xlsx"
         response["Content-Disposition"] = (
             f"attachment; filename*=UTF-8''{quote(filename)}"
         )

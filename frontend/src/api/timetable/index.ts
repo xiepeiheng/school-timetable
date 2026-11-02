@@ -111,6 +111,40 @@ export const reqSessionCopyDay = (data: {
   time_slots?: number[]
 }) => http.post<ResponseData<{ copied: number }>>("/sessions/copy-day/", data)
 
+export const reqSessionApplyTemplateCell = (data: {
+  template: number
+  target_date: string
+  time_slot: number
+  source_weekday: number
+  school_classes?: number[]
+  overwrite?: boolean
+}) =>
+  http.post<
+    ResponseData<{
+      created: number
+      updated: number
+      skipped: number
+      matched: number
+    }>
+  >("/sessions/apply-template-cell/", data)
+
+export const reqSessionApplySubjectCell = (data: {
+  target_date: string
+  time_slot: number
+  subject: number
+  school_classes?: number[]
+  overwrite?: boolean
+}) =>
+  http.post<
+    ResponseData<{
+      created: number
+      updated: number
+      skipped: number
+      matched: number
+      missing_teacher: number
+    }>
+  >("/sessions/apply-subject-cell/", data)
+
 // ── 课表查看 ──
 export const reqClassTimetable = (params: {
   school_class: number
@@ -131,7 +165,7 @@ export const reqTeacherTimetable = (params: {
   })
 
 // ── 导出 ──
-export const reqExportMonthly = (params: { month: string; template: number }) =>
+export const reqExportMonthly = (params: { start: string; end: string }) =>
   http.get<Blob>("/export/monthly/", { params, responseType: "blob" })
 
 export const reqExportTeacherSheets = (params: { start: string; end: string }) =>
