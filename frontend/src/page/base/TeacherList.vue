@@ -23,6 +23,8 @@ const form = ref<Partial<Teacher>>({
   name: "",
   subject: undefined,
   note: "",
+  is_cross_grade: false,
+  full_load_score: 12,
   is_active: true,
 })
 
@@ -42,7 +44,14 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  form.value = { name: "", subject: subjects.value[0]?.id, note: "", is_active: true }
+  form.value = {
+    name: "",
+    subject: subjects.value[0]?.id,
+    note: "",
+    is_cross_grade: false,
+    full_load_score: 12,
+    is_active: true,
+  }
   showModal.value = true
 }
 
@@ -50,6 +59,16 @@ function openEdit(row: Teacher) {
   editing.value = row
   form.value = { ...row }
   showModal.value = true
+}
+
+function onSubjectChange(subjectId: number) {
+  form.value.subject = subjectId
+  const name = subjects.value.find((s) => s.id === subjectId)?.name
+  form.value.full_load_score = ["音乐", "体育", "美术", "舞蹈"].includes(
+    name || "",
+  )
+    ? 14
+    : 12
 }
 
 async function save() {
@@ -73,6 +92,13 @@ async function remove(row: Teacher) {
 const columns: DataTableColumns<Teacher> = [
   { title: "姓名", key: "name" },
   { title: "学科", key: "subject_name" },
+  {
+    title: "跨年级",
+    key: "is_cross_grade",
+    width: 90,
+    render: (r) => (r.is_cross_grade ? "是" : "否"),
+  },
+  { title: "满课系数", key: "full_load_score", width: 100 },
   { title: "备注", key: "note", render: (r) => r.note || "-" },
   { title: "启用", key: "is_active", width: 80, render: (r) => (r.is_active ? "是" : "否") },
   {
@@ -130,7 +156,21 @@ onMounted(async () => {
             <n-input v-model:value="form.name" />
           </n-form-item>
           <n-form-item label="学科">
-            <n-select v-model:value="form.subject" :options="subjectOptions()" />
+            <n-select
+              :value="form.subject"
+              :options="subjectOptions()"
+              @update:value="onSubjectChange"
+            />
+          </n-form-item>
+          <n-form-item label="跨年级教师">
+            <n-switch v-model:value="form.is_cross_grade" />
+          </n-form-item>
+          <n-form-item label="每周满课系数">
+            <n-input-number
+              v-model:value="form.full_load_score"
+              :min="1"
+              :precision="0"
+            />
           </n-form-item>
           <n-form-item label="备注">
             <n-input v-model:value="form.note" />

@@ -3,6 +3,7 @@ export interface Subject {
   name: string
   color: string
   sort_order: number
+  is_main: boolean
   is_active: boolean
 }
 
@@ -12,6 +13,8 @@ export interface Teacher {
   subject: number
   subject_name: string
   note: string
+  is_cross_grade: boolean
+  full_load_score: number
   is_active: boolean
 }
 
@@ -22,6 +25,7 @@ export interface SchoolClass {
   homeroom_teacher: number | null
   homeroom_teacher_name: string
   sort_order: number
+  is_key_class: boolean
   is_active: boolean
 }
 
@@ -29,7 +33,6 @@ export interface TimeSlot {
   id: number
   name: string
   sort_order: number
-  weight: string
   report_group: number | null
   report_group_name: string
   is_active: boolean
@@ -39,6 +42,7 @@ export interface ReportGroup {
   id: number
   kind: string
   kind_display: string
+  coefficient: string
   sort_order: number
 }
 

@@ -57,7 +57,6 @@ def generate_sessions(
             defaults = {
                 "subject": entry.subject,
                 "teacher_id": teacher_id,
-                "weight": entry.time_slot.weight,
                 "source": CourseSession.Source.TEMPLATE,
                 "flag": CourseSession.Flag.NORMAL,
             }
@@ -216,7 +215,6 @@ def copy_day(
             school_class=s.school_class,
             subject=s.subject,
             teacher=s.teacher,
-            weight=s.weight,
             flag=s.flag,
             source=CourseSession.Source.MANUAL,
             note=s.note,
@@ -273,7 +271,6 @@ def apply_template_cell(
             "teacher_id": assignments.get(
                 (entry.school_class_id, entry.subject_id)
             ),
-            "weight": slot.weight,
             "flag": CourseSession.Flag.NORMAL,
             "source": CourseSession.Source.MANUAL,
             "note": "",
@@ -343,7 +340,6 @@ def apply_subject_cell(
         defaults = {
             "subject": subject,
             "teacher_id": teacher_id,
-            "weight": slot.weight,
             "flag": CourseSession.Flag.NORMAL,
             "source": CourseSession.Source.MANUAL,
             "note": "",
@@ -382,7 +378,6 @@ def apply_subject_cell(
 @transaction.atomic
 def bulk_upsert_sessions(items: list[dict]) -> dict:
     """按格子批量写入/清空课程记录。subject 为空表示清空该格。"""
-    slot_weight = dict(TimeSlot.objects.values_list("id", "weight"))
     created = updated = deleted = 0
     for item in items:
         key = {
@@ -397,7 +392,6 @@ def bulk_upsert_sessions(items: list[dict]) -> dict:
         defaults = {
             "subject_id": subject_id,
             "teacher_id": item.get("teacher"),
-            "weight": slot_weight.get(item["time_slot"], 1),
             "flag": item.get("flag") or CourseSession.Flag.NORMAL,
             "note": item.get("note") or "",
             "source": CourseSession.Source.MANUAL,
@@ -458,7 +452,7 @@ def class_timetable(class_id: int, start: date, end: date) -> dict:
         "slots": list(
             TimeSlot.objects.all()
             .order_by("sort_order", "id")
-            .values("id", "name", "sort_order", "weight")
+            .values("id", "name", "sort_order")
         ),
         "sessions": [
             {
@@ -513,7 +507,7 @@ def teacher_timetable(teacher_id: int, start: date, end: date) -> dict:
         "slots": list(
             TimeSlot.objects.all()
             .order_by("sort_order", "id")
-            .values("id", "name", "sort_order", "weight")
+            .values("id", "name", "sort_order")
         ),
         "sessions": sessions,
         "conflicts": conflicts,

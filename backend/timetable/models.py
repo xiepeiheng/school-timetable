@@ -1,3 +1,4 @@
+from django.core.validators import MinValueValidator
 from django.db import models
 
 
@@ -21,6 +22,7 @@ class Subject(models.Model):
     name = models.CharField(max_length=50, unique=True)
     color = models.CharField(max_length=20, blank=True, default="")
     sort_order = models.PositiveIntegerField(default=0)
+    is_main = models.BooleanField(default=True, help_text="正课；音乐/体育/美术/舞蹈等为副科")
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -38,6 +40,12 @@ class Teacher(models.Model):
         Subject, on_delete=models.PROTECT, related_name="teachers"
     )
     note = models.CharField(max_length=200, blank=True, default="")
+    is_cross_grade = models.BooleanField(default=False, help_text="跨年级教师系数 1.2")
+    full_load_score = models.PositiveSmallIntegerField(
+        default=12,
+        validators=[MinValueValidator(1)],
+        help_text="每周满课系数",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -60,6 +68,7 @@ class SchoolClass(models.Model):
         related_name="homeroom_classes",
     )
     sort_order = models.PositiveIntegerField(default=0)
+    is_key_class = models.BooleanField(default=False, help_text="凌云班/重点班")
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -70,15 +79,20 @@ class SchoolClass(models.Model):
 
 
 class ReportGroup(models.Model):
-    """报告分组：导出时把时间段归入 早读/上午/下午/自习 四类之一。"""
+    """报告分组：课时分类，决定导出时的基础系数。"""
 
     class Kind(models.TextChoices):
-        EARLY_READ = "early_read", "早读"
-        MORNING = "morning", "上午"
-        AFTERNOON = "afternoon", "下午"
+        COURSE = "course", "正课"
         SELF_STUDY = "self_study", "自习"
 
     kind = models.CharField(max_length=20, choices=Kind.choices, unique=True)
+    coefficient = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=1,
+        validators=[MinValueValidator(0)],
+        help_text="导出时预填的基础系数",
+    )
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -89,11 +103,10 @@ class ReportGroup(models.Model):
 
 
 class TimeSlot(models.Model):
-    """时间段（课表的一行）。只表示排序，不绑定具体时刻。权重默认 1。"""
+    """时间段（课表的一行）。只表示排序，不绑定具体时刻。"""
 
     name = models.CharField(max_length=50)
     sort_order = models.PositiveIntegerField(default=0)
-    weight = models.DecimalField(max_digits=6, decimal_places=2, default=1)
     report_group = models.ForeignKey(
         ReportGroup,
         null=True,
@@ -204,12 +217,6 @@ class CourseSession(models.Model):
         blank=True,
         on_delete=models.PROTECT,
         related_name="sessions",
-    )
-    weight = models.DecimalField(
-        max_digits=6,
-        decimal_places=2,
-        default=1,
-        help_text="写入时对时间段权重的快照，改时间段权重不影响历史",
     )
     flag = models.CharField(
         max_length=20, choices=Flag.choices, default=Flag.NORMAL, help_text="异常标记"

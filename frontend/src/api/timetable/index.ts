@@ -165,8 +165,5 @@ export const reqTeacherTimetable = (params: {
   })
 
 // ── 导出 ──
-export const reqExportMonthly = (params: { start: string; end: string }) =>
-  http.get<Blob>("/export/monthly/", { params, responseType: "blob" })
-
 export const reqExportTeacherSheets = (params: { start: string; end: string }) =>
   http.get<Blob>("/export/teacher-sheets/", { params, responseType: "blob" })

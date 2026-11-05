@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from common.exceptions import BusinessException, NotFoundException
 from common.response import success_response
 from timetable import services
-from timetable.exporting import build_monthly_workbook, build_teacher_workbook
+from timetable.exporting import build_teacher_workbook
 from timetable.models import (
     CourseSession,
     ReportGroup,
@@ -417,31 +417,6 @@ class TimetableViewSet(viewsets.ViewSet):
 
 
 class ExportViewSet(viewsets.ViewSet):
-    @action(detail=False, methods=["get"])
-    def monthly(self, request):
-        start = request.query_params.get("start", "")
-        end = request.query_params.get("end", "")
-        try:
-            start_date = date.fromisoformat(start)
-            end_date = date.fromisoformat(end)
-        except ValueError:
-            raise BusinessException(message="日期格式应为 YYYY-MM-DD")
-        if start_date > end_date:
-            raise BusinessException(message="起始日期不能晚于结束日期")
-
-        workbook = build_monthly_workbook(start_date, end_date)
-        response = HttpResponse(
-            content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        )
-        filename = f"高一（1）部课时_{start}_{end}.xlsx"
-        response["Content-Disposition"] = (
-            f"attachment; filename*=UTF-8''{quote(filename)}"
-        )
-        workbook.save(response)
-        return response
-
     @action(detail=False, methods=["get"], url_path="teacher-sheets")
     def teacher_sheets(self, request):
         start = request.query_params.get("start", "")

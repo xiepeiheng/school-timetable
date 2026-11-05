@@ -24,6 +24,7 @@ const form = ref<Partial<SchoolClass>>({
   grade: "高一1部",
   homeroom_teacher: null,
   sort_order: 0,
+  is_key_class: false,
   is_active: true,
 })
 
@@ -48,6 +49,7 @@ function openCreate() {
     grade: "高一1部",
     homeroom_teacher: null,
     sort_order: rows.value.length,
+    is_key_class: false,
     is_active: true,
   }
   showModal.value = true
@@ -80,6 +82,12 @@ async function remove(row: SchoolClass) {
 const columns: DataTableColumns<SchoolClass> = [
   { title: "班级", key: "name" },
   { title: "部/年级", key: "grade" },
+  {
+    title: "类型",
+    key: "is_key_class",
+    width: 100,
+    render: (r) => (r.is_key_class ? "凌云班" : "普通班"),
+  },
   { title: "班主任", key: "homeroom_teacher_name", render: (r) => r.homeroom_teacher_name || "-" },
   { title: "排序", key: "sort_order", width: 80 },
   { title: "启用", key: "is_active", width: 80, render: (r) => (r.is_active ? "是" : "否") },
@@ -143,6 +151,12 @@ onMounted(async () => {
               :options="teacherOptions()"
               clearable
             />
+          </n-form-item>
+          <n-form-item label="类型">
+            <n-switch v-model:value="form.is_key_class">
+              <template #checked>凌云班</template>
+              <template #unchecked>普通班</template>
+            </n-switch>
           </n-form-item>
           <n-form-item label="排序">
             <n-input-number v-model:value="form.sort_order" :min="0" />

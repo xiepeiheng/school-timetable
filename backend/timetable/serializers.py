@@ -25,7 +25,7 @@ class SemesterSerializer(serializers.ModelSerializer):
 class SubjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Subject
-        fields = ["id", "name", "color", "sort_order", "is_active"]
+        fields = ["id", "name", "color", "sort_order", "is_main", "is_active"]
 
 
 class TeacherReadSerializer(serializers.ModelSerializer):
@@ -39,6 +39,8 @@ class TeacherReadSerializer(serializers.ModelSerializer):
             "subject",
             "subject_name",
             "note",
+            "is_cross_grade",
+            "full_load_score",
             "is_active",
         ]
 
@@ -46,7 +48,15 @@ class TeacherReadSerializer(serializers.ModelSerializer):
 class TeacherWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Teacher
-        fields = ["id", "name", "subject", "note", "is_active"]
+        fields = [
+            "id",
+            "name",
+            "subject",
+            "note",
+            "is_cross_grade",
+            "full_load_score",
+            "is_active",
+        ]
 
 
 class SchoolClassReadSerializer(serializers.ModelSerializer):
@@ -63,6 +73,7 @@ class SchoolClassReadSerializer(serializers.ModelSerializer):
             "homeroom_teacher",
             "homeroom_teacher_name",
             "sort_order",
+            "is_key_class",
             "is_active",
         ]
 
@@ -76,6 +87,7 @@ class SchoolClassWriteSerializer(serializers.ModelSerializer):
             "grade",
             "homeroom_teacher",
             "sort_order",
+            "is_key_class",
             "is_active",
         ]
 
@@ -87,7 +99,7 @@ class ReportGroupSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ReportGroup
-        fields = ["id", "kind", "kind_display", "sort_order"]
+        fields = ["id", "kind", "kind_display", "coefficient", "sort_order"]
 
 
 class TimeSlotSerializer(serializers.ModelSerializer):
@@ -101,7 +113,6 @@ class TimeSlotSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "sort_order",
-            "weight",
             "report_group",
             "report_group_name",
             "is_active",
@@ -255,7 +266,6 @@ class CourseSessionReadSerializer(serializers.ModelSerializer):
             "subject_name",
             "teacher",
             "teacher_name",
-            "weight",
             "flag",
             "source",
             "note",

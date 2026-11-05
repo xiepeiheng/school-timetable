@@ -119,7 +119,6 @@ class Command(BaseCommand):
                 school_class=s.school_class,
                 subject=s.subject,
                 teacher=s.teacher,
-                weight=s.weight,
                 flag=s.flag,
                 source=CourseSession.Source.MANUAL,
                 note=s.note,

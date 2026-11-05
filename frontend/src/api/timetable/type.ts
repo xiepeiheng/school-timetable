@@ -31,7 +31,6 @@ export interface CourseSession {
   subject_name: string
   teacher: number | null
   teacher_name: string
-  weight: string
   flag: string
   source: string
   note: string
@@ -41,7 +40,6 @@ export interface SlotInfo {
   id: number
   name: string
   sort_order?: number
-  weight?: string
 }
 
 export interface ClassTimetableRes {

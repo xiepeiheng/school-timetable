@@ -14,7 +14,13 @@ const rows = ref<Subject[]>([])
 const loading = ref(false)
 const showModal = ref(false)
 const editing = ref<Subject | null>(null)
-const form = ref<Partial<Subject>>({ name: "", color: "", sort_order: 0, is_active: true })
+const form = ref<Partial<Subject>>({
+  name: "",
+  color: "",
+  sort_order: 0,
+  is_main: true,
+  is_active: true,
+})
 
 async function load() {
   loading.value = true
@@ -27,7 +33,13 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  form.value = { name: "", color: "", sort_order: rows.value.length, is_active: true }
+  form.value = {
+    name: "",
+    color: "",
+    sort_order: rows.value.length,
+    is_main: true,
+    is_active: true,
+  }
   showModal.value = true
 }
 
@@ -58,6 +70,12 @@ async function remove(row: Subject) {
 const columns: DataTableColumns<Subject> = [
   { title: "名称", key: "name" },
   { title: "颜色", key: "color", render: (r) => r.color || "-" },
+  {
+    title: "类型",
+    key: "is_main",
+    width: 90,
+    render: (r) => (r.is_main ? "正课" : "副科"),
+  },
   { title: "排序", key: "sort_order", width: 80 },
   {
     title: "启用",
@@ -103,6 +121,12 @@ onMounted(load)
           </n-form-item>
           <n-form-item label="颜色">
             <n-input v-model:value="form.color" placeholder="#RRGGBB（可选）" />
+          </n-form-item>
+          <n-form-item label="类型">
+            <n-switch v-model:value="form.is_main">
+              <template #checked>正课</template>
+              <template #unchecked>副科</template>
+            </n-switch>
           </n-form-item>
           <n-form-item label="排序">
             <n-input-number v-model:value="form.sort_order" :min="0" />

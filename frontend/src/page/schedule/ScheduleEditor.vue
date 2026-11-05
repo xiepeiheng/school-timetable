@@ -849,7 +849,7 @@ onMounted(async () => {
     <n-modal v-model:show="swapModal">
       <n-card style="width: 640px; max-width: 94vw" title="交换两节课">
         <n-alert type="info" :bordered="false" style="margin-bottom: 12px">
-          交换只改「学科 + 教师」，日期/班级/时段/权重不变；两格会自动标记为换课并写下备注。
+          交换只改「学科 + 教师」，日期/班级/时段不变；两格会自动标记为换课并写下备注。
         </n-alert>
         <div class="swap-row">
           <span class="swap-label">A</span>

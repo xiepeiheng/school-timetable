@@ -84,23 +84,18 @@ SLOT_ROWS = [
     ("晚一", 13),
     ("晚二", 14),
     ("晚三", 15),
-    ("晚四", 16),
 ]
 
 TEACHING_SLOTS = {"早读", "一", "二", "三", "四", "五", "六", "七", "八", "晚一", "晚二", "晚三"}
 
-MORNING_SLOTS = {"一", "二", "三", "四"}
-AFTERNOON_SLOTS = {"五", "六", "七", "八"}
-SELF_STUDY_SLOTS = {"晚一", "晚二", "晚三"}
+COURSE_SLOTS = {"一", "二", "三", "四", "五", "六", "七", "八"}
+SELF_STUDY_SLOTS = {"早读", "晚一", "晚二", "晚三"}
+NON_MAIN_SUBJECTS = {"音乐", "体育", "舞蹈", "美术"}
 
 
 def _report_kind(name: str):
-    if name == "早读":
-        return "early_read"
-    if name in MORNING_SLOTS:
-        return "morning"
-    if name in AFTERNOON_SLOTS:
-        return "afternoon"
+    if name in COURSE_SLOTS:
+        return "course"
     if name in SELF_STUDY_SLOTS:
         return "self_study"
     return None
@@ -166,14 +161,25 @@ class Command(BaseCommand):
             if not teacher_name:
                 continue
             subject, _ = Subject.objects.get_or_create(
-                name=subject_name, defaults={"sort_order": order}
+                name=subject_name,
+                defaults={
+                    "sort_order": order,
+                    "is_main": subject_name not in NON_MAIN_SUBJECTS,
+                },
             )
             if subject_name not in subjects:
                 subjects[subject_name] = subject
                 order += 1
             Teacher.objects.get_or_create(
-                name=teacher_name, defaults={"subject": subject}
+                name=teacher_name,
+                defaults={
+                    "subject": subject,
+                    "full_load_score": (
+                        14 if subject_name in NON_MAIN_SUBJECTS else 12
+                    ),
+                },
             )
+        Teacher.objects.filter(name="陈海燕").update(is_cross_grade=True)
         self.stdout.write(f"学科 {Subject.objects.count()}，教师 {Teacher.objects.count()}")
         return subjects
 
@@ -188,7 +194,7 @@ class Command(BaseCommand):
         # 时间段框架（含不排课的行）
         for index, (name, _offset) in enumerate(SLOT_ROWS):
             TimeSlot.objects.get_or_create(
-                name=name, defaults={"sort_order": index, "weight": 1}
+                name=name, defaults={"sort_order": index}
             )
         slots = {s.name: s for s in TimeSlot.objects.all()}
         self._assign_report_groups()
@@ -211,6 +217,7 @@ class Command(BaseCommand):
                     "grade": "高一1部",
                     "homeroom_teacher": homeroom_teacher,
                     "sort_order": order,
+                    "is_key_class": class_name in {"2601", "2602"},
                 },
             )
             classes[class_name] = klass
@@ -287,12 +294,7 @@ class Command(BaseCommand):
     # ── 辅助 ──
     def _assign_report_groups(self) -> None:
         groups = {}
-        for kind, order in [
-            ("early_read", 0),
-            ("morning", 1),
-            ("afternoon", 2),
-            ("self_study", 3),
-        ]:
+        for kind, order in [("course", 0), ("self_study", 1)]:
             groups[kind], _ = ReportGroup.objects.get_or_create(
                 kind=kind, defaults={"sort_order": order}
             )
