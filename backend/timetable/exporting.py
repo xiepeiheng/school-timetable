@@ -282,11 +282,13 @@ def build_teacher_workbook(start: date, end: date) -> openpyxl.Workbook:
 
     sessions = CourseSession.objects.filter(
         date__range=(start, end), time_slot_id__in=slot_ids
-    ).select_related("school_class", "teacher")
+    ).select_related("school_class", "subject", "teacher")
     by_teacher: dict[int, dict] = defaultdict(dict)
+    sessions_by_teacher: dict[int, list] = defaultdict(list)
     for s in sessions:
         if s.teacher_id:
             by_teacher[s.teacher_id][(s.date, s.time_slot_id)] = s
+            sessions_by_teacher[s.teacher_id].append(s)
 
     days: list[date] = []
     cur = start
@@ -307,12 +309,67 @@ def build_teacher_workbook(start: date, end: date) -> openpyxl.Workbook:
             title = _sheet_title(f"{base}({n})")
         used.add(title)
         ws = wb.create_sheet(title)
-        _write_teacher_sheet(ws, teacher, days, slots, by_teacher.get(teacher.id, {}))
+        _write_teacher_sheet(
+            ws,
+            teacher,
+            days,
+            slots,
+            by_teacher.get(teacher.id, {}),
+            sessions_by_teacher.get(teacher.id, []),
+        )
 
     return wb
 
 
-def _write_teacher_sheet(ws, teacher, days, slots, sess_map):
+def _write_stat_table(
+    ws,
+    start_row: int,
+    title: str,
+    headers: list[str],
+    rows: list[tuple[str, list[int]]],
+    column_totals: list[int],
+) -> int:
+    """写一张「行标签 × 分类」统计表，返回合计行行号。"""
+    width = len(headers)
+    ws.merge_cells(
+        start_row=start_row,
+        start_column=1,
+        end_row=start_row,
+        end_column=width,
+    )
+    title_cell = ws.cell(row=start_row, column=1, value=title)
+    title_cell.font = Font(bold=True)
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    header_row = start_row + 1
+    for col, head in enumerate(headers, start=1):
+        ws.cell(row=header_row, column=col, value=head)
+
+    for i, (label, values) in enumerate(rows):
+        r = header_row + 1 + i
+        ws.cell(row=r, column=1, value=label)
+        for col, value in enumerate(values, start=2):
+            ws.cell(row=r, column=col, value=value)
+        ws.cell(row=r, column=width, value=sum(values))
+
+    total_row = header_row + 1 + len(rows)
+    ws.cell(row=total_row, column=1, value="合计")
+    for col, value in enumerate(column_totals, start=2):
+        ws.cell(row=total_row, column=col, value=value)
+    ws.cell(row=total_row, column=width, value=sum(column_totals))
+
+    for r in range(header_row, total_row + 1):
+        for c in range(1, width + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.border = _BORDER
+            cell.alignment = _CENTER
+    for c in range(1, width + 1):
+        ws.cell(row=header_row, column=c).font = Font(bold=True)
+        ws.cell(row=total_row, column=c).font = Font(bold=True)
+    return total_row
+
+
+def _write_teacher_sheet(ws, teacher, days, slots, sess_map, teacher_sessions):
     headers = ["日期", "星期"] + [s.name for s in slots] + ["合计", "按系数合计"]
     for col, head in enumerate(headers, start=1):
         ws.cell(row=1, column=col, value=head)
@@ -378,8 +435,77 @@ def _write_teacher_sheet(ws, teacher, days, slots, sess_map):
     )
     ws.cell(row=weight_row, column=weight_col).number_format = "0.00"
 
-    # 空一行后列出所有带标记的条目
-    note_start = data_end + 4
+    # 空一行后：按节次、按学科的任课统计；再空一行后列出标记条目。
+    if teacher_sessions:
+        class_rows = sorted(
+            {
+                (s.school_class.sort_order, s.school_class.id, s.school_class.name)
+                for s in teacher_sessions
+            }
+        )
+        subject_rows = sorted(
+            {
+                (s.subject.sort_order, s.subject.id, s.subject.name)
+                for s in teacher_sessions
+            }
+        )
+        class_ids = [row[1] for row in class_rows]
+        class_names = [row[2] for row in class_rows]
+        subject_ids = [row[1] for row in subject_rows]
+        subject_names = [row[2] for row in subject_rows]
+
+        slot_counts: dict[tuple, int] = defaultdict(int)
+        subject_counts: dict[tuple, int] = defaultdict(int)
+        for s in teacher_sessions:
+            slot_counts[(s.school_class_id, s.time_slot_id)] += 1
+            subject_counts[(s.school_class_id, s.subject_id)] += 1
+
+        slot_headers = ["班级"] + [slot.name for slot in slots] + ["合计"]
+        slot_rows = [
+            (
+                class_name,
+                [slot_counts[(class_id, slot.id)] for slot in slots],
+            )
+            for class_id, class_name in zip(class_ids, class_names)
+        ]
+        slot_totals = [
+            sum(slot_counts[(class_id, slot.id)] for class_id in class_ids)
+            for slot in slots
+        ]
+
+        subject_headers = ["班级"] + subject_names + ["合计"]
+        subject_rows_data = [
+            (
+                class_name,
+                [subject_counts[(class_id, subject_id)] for subject_id in subject_ids],
+            )
+            for class_id, class_name in zip(class_ids, class_names)
+        ]
+        subject_totals = [
+            sum(subject_counts[(class_id, subject_id)] for class_id in class_ids)
+            for subject_id in subject_ids
+        ]
+
+        end_row = _write_stat_table(
+            ws,
+            weight_row + 2,
+            "任课统计（按节次）",
+            slot_headers,
+            slot_rows,
+            slot_totals,
+        )
+        end_row = _write_stat_table(
+            ws,
+            end_row + 2,
+            "任课统计（按学科）",
+            subject_headers,
+            subject_rows_data,
+            subject_totals,
+        )
+        note_start = end_row + 2
+    else:
+        note_start = data_end + 4
+
     ws.cell(row=note_start, column=1, value="标注说明")
     for col, head in enumerate(["日期", "节次", "班级", "标记", "备注"], start=1):
         ws.cell(row=note_start + 1, column=col, value=head)

@@ -616,3 +616,72 @@ class ExportTest(TestCase):
         self.assertEqual(ws.cell(row=5, column=col_early).value, 0.5)
         self.assertEqual(ws.cell(row=5, column=col_one).value, 1.0)
         self.assertEqual(ws.cell(row=5, column=weight_col).value, 1.5)
+
+        # 按节次统计：2601 早读 1、一 1、合计 2
+        self.assertEqual(ws.cell(row=7, column=1).value, "任课统计（按节次）")
+        self.assertEqual(
+            [ws.cell(row=8, column=c).value for c in range(1, 5)],
+            ["班级", "早读", "一", "合计"],
+        )
+        self.assertEqual(
+            [ws.cell(row=9, column=c).value for c in range(1, 5)],
+            ["2601", 1, 1, 2],
+        )
+        self.assertEqual(
+            [ws.cell(row=10, column=c).value for c in range(1, 5)],
+            ["合计", 1, 1, 2],
+        )
+
+        # 按学科统计：2601 语文 2
+        self.assertEqual(ws.cell(row=12, column=1).value, "任课统计（按学科）")
+        self.assertEqual(
+            [ws.cell(row=13, column=c).value for c in range(1, 4)],
+            ["班级", "语文", "合计"],
+        )
+        self.assertEqual(
+            [ws.cell(row=14, column=c).value for c in range(1, 4)],
+            ["2601", 2, 2],
+        )
+        self.assertEqual(
+            [ws.cell(row=15, column=c).value for c in range(1, 4)],
+            ["合计", 2, 2],
+        )
+
+        # 标注说明区在统计表之后
+        self.assertEqual(ws.cell(row=17, column=1).value, "标注说明")
+
+    def test_teacher_subject_table_supports_substitution(self):
+        math = Subject.objects.create(name="数学", sort_order=2)
+        c2 = SchoolClass.objects.create(name="2602", sort_order=2)
+        CourseSession.objects.create(
+            date=date(2026, 9, 8),
+            time_slot=self.slot_1,
+            school_class=c2,
+            subject=math,
+            teacher=self.t_ma,
+            weight=self.slot_1.weight,
+        )
+
+        wb = build_teacher_workbook(date(2026, 9, 7), date(2026, 9, 8))
+        ws = wb["语文-马老师"]
+        title_row = next(
+            r
+            for r in range(1, ws.max_row + 1)
+            if ws.cell(row=r, column=1).value == "任课统计（按学科）"
+        )
+        self.assertEqual(
+            [ws.cell(row=title_row + 1, column=c).value for c in range(1, 5)],
+            ["班级", "语文", "数学", "合计"],
+        )
+        self.assertEqual(
+            [ws.cell(row=title_row + 2, column=c).value for c in range(1, 5)],
+            ["2601", 2, 0, 2],
+        )
+        self.assertEqual(
+            [ws.cell(row=title_row + 3, column=c).value for c in range(1, 5)],
+            ["2602", 0, 1, 1],
+        )
+        self.assertEqual(
+            [ws.cell(row=title_row + 4, column=c).value for c in range(1, 5)],
+            ["合计", 2, 1, 3],
+        )
