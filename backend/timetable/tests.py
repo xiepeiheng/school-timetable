@@ -650,6 +650,18 @@ class ExportTest(TestCase):
         # 标注说明区在统计表之后
         self.assertEqual(ws.cell(row=17, column=1).value, "标注说明")
 
+        # 教师页签之后追加班级课表，格子为「学科 - 教师」
+        self.assertIn("班级-2601", wb.sheetnames)
+        self.assertEqual(wb.sheetnames[-1], "班级-2601")
+        class_ws = wb["班级-2601"]
+        self.assertEqual(
+            [class_ws.cell(row=1, column=c).value for c in range(1, 5)],
+            ["日期", "星期", "早读", "一"],
+        )
+        self.assertEqual(class_ws.cell(row=2, column=3).value, "语文 - 马老师")
+        self.assertEqual(class_ws.cell(row=2, column=4).value, "语文 - 马老师")
+        self.assertIsNone(class_ws.cell(row=3, column=3).value)
+
     def test_teacher_subject_table_supports_substitution(self):
         math = Subject.objects.create(name="数学", sort_order=2)
         c2 = SchoolClass.objects.create(name="2602", sort_order=2)

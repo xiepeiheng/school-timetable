@@ -285,7 +285,9 @@ def build_teacher_workbook(start: date, end: date) -> openpyxl.Workbook:
     ).select_related("school_class", "subject", "teacher")
     by_teacher: dict[int, dict] = defaultdict(dict)
     sessions_by_teacher: dict[int, list] = defaultdict(list)
+    by_class: dict[int, dict] = defaultdict(dict)
     for s in sessions:
+        by_class[s.school_class_id][(s.date, s.time_slot_id)] = s
         if s.teacher_id:
             by_teacher[s.teacher_id][(s.date, s.time_slot_id)] = s
             sessions_by_teacher[s.teacher_id].append(s)
@@ -317,6 +319,20 @@ def build_teacher_workbook(start: date, end: date) -> openpyxl.Workbook:
             by_teacher.get(teacher.id, {}),
             sessions_by_teacher.get(teacher.id, []),
         )
+
+    # 教师页签之后追加每个启用班级的完整课表，便于交叉核对。
+    for klass in SchoolClass.objects.filter(is_active=True).order_by(
+        "sort_order", "id"
+    ):
+        title = _sheet_title(f"班级-{klass.name}")
+        base = title
+        n = 1
+        while title in used:
+            n += 1
+            title = _sheet_title(f"{base}({n})")
+        used.add(title)
+        ws = wb.create_sheet(title)
+        _write_class_sheet(ws, klass, days, slots, by_class.get(klass.id, {}))
 
     return wb
 
@@ -367,6 +383,44 @@ def _write_stat_table(
         ws.cell(row=header_row, column=c).font = Font(bold=True)
         ws.cell(row=total_row, column=c).font = Font(bold=True)
     return total_row
+
+
+def _write_class_sheet(ws, klass, days, slots, sess_map):
+    """班级课表：行=日期，列=节次，格子=学科 - 教师。"""
+    headers = ["日期", "星期"] + [s.name for s in slots]
+    for col, head in enumerate(headers, start=1):
+        ws.cell(row=1, column=col, value=head)
+    ncols = len(headers)
+
+    for i, day in enumerate(days):
+        r = 2 + i
+        ws.cell(row=r, column=1, value=f"{day.month}.{day.day}")
+        ws.cell(row=r, column=2, value=f"周{WEEKDAY_CN[day.isoweekday() - 1]}")
+        for j, slot in enumerate(slots):
+            session = sess_map.get((day, slot.id))
+            if not session:
+                continue
+            teacher_name = session.teacher.name if session.teacher else "未指定"
+            ws.cell(
+                row=r,
+                column=3 + j,
+                value=f"{session.subject.name} - {teacher_name}",
+            )
+
+    for r in range(1, 1 + len(days)):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.border = _BORDER
+            cell.alignment = _CENTER
+    for c in range(1, ncols + 1):
+        ws.cell(row=1, column=c).font = Font(bold=True)
+
+    ws.row_dimensions[1].height = 22
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 6
+    for c in range(3, ncols + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 15
+    ws.freeze_panes = "C2"
 
 
 def _write_teacher_sheet(ws, teacher, days, slots, sess_map, teacher_sessions):
