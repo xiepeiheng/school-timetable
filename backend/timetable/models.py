@@ -86,13 +86,6 @@ class ReportGroup(models.Model):
         SELF_STUDY = "self_study", "自习"
 
     kind = models.CharField(max_length=20, choices=Kind.choices, unique=True)
-    coefficient = models.DecimalField(
-        max_digits=4,
-        decimal_places=2,
-        default=1,
-        validators=[MinValueValidator(0)],
-        help_text="导出时预填的基础系数",
-    )
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -107,6 +100,13 @@ class TimeSlot(models.Model):
 
     name = models.CharField(max_length=50)
     sort_order = models.PositiveIntegerField(default=0)
+    coefficient = models.DecimalField(
+        max_digits=4,
+        decimal_places=3,
+        default=1,
+        validators=[MinValueValidator(0)],
+        help_text="该节次的固有基准系数",
+    )
     report_group = models.ForeignKey(
         ReportGroup,
         null=True,

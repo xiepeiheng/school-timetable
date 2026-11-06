@@ -3,7 +3,6 @@ import { computed, h, onMounted, ref } from "vue"
 import { NButton, NSpace, useMessage, type DataTableColumns } from "naive-ui"
 import {
   reqReportGroupList,
-  reqReportGroupUpdate,
   reqTimeSlotCreate,
   reqTimeSlotDelete,
   reqTimeSlotList,
@@ -15,22 +14,19 @@ import type { ReportGroup, TimeSlot } from "@/api/base/type"
 const message = useMessage()
 const rows = ref<TimeSlot[]>([])
 const groups = ref<ReportGroup[]>([])
-const groupCoefficients = ref<Record<number, number>>({})
 const loading = ref(false)
 const showModal = ref(false)
 const editing = ref<TimeSlot | null>(null)
 const form = ref<Partial<TimeSlot>>({
   name: "",
   sort_order: 0,
+  coefficient: "1.000",
   report_group: null,
   is_active: true,
 })
 
 const groupOptions = computed(() =>
-  groups.value.map((g) => ({
-    label: `${g.kind_display}（${g.coefficient}）`,
-    value: g.id,
-  })),
+  groups.value.map((g) => ({ label: g.kind_display, value: g.id })),
 )
 
 async function load() {
@@ -39,24 +35,9 @@ async function load() {
     const [slots, gs] = await Promise.all([reqTimeSlotList(), reqReportGroupList()])
     rows.value = slots.data
     groups.value = gs.data
-    groupCoefficients.value = Object.fromEntries(
-      gs.data.map((g) => [g.id, Number(g.coefficient)]),
-    )
   } finally {
     loading.value = false
   }
-}
-
-async function saveGroupCoefficients() {
-  await Promise.all(
-    groups.value.map((g) =>
-      reqReportGroupUpdate(g.id, {
-        coefficient: String(groupCoefficients.value[g.id] ?? 0),
-      }),
-    ),
-  )
-  message.success("报告分组系数已保存")
-  load()
 }
 
 function openCreate() {
@@ -64,6 +45,7 @@ function openCreate() {
   form.value = {
     name: "",
     sort_order: rows.value.length,
+    coefficient: "1.000",
     report_group: null,
     is_active: true,
   }
@@ -106,6 +88,7 @@ async function move(index: number, delta: number) {
 
 const columns: DataTableColumns<TimeSlot> = [
   { title: "名称", key: "name" },
+  { title: "系数", key: "coefficient", width: 100 },
   { title: "报告分组", key: "report_group_name", width: 120, render: (r) => r.report_group_name || "—" },
   { title: "排序", key: "sort_order", width: 80 },
   { title: "启用", key: "is_active", width: 80, render: (r) => (r.is_active ? "是" : "否") },
@@ -150,28 +133,6 @@ onMounted(load)
       <n-button @click="load">刷新</n-button>
     </div>
 
-    <n-card size="small" title="报告分组系数" style="margin-bottom: 12px">
-      <n-space align="center">
-        <div
-          v-for="g in groups"
-          :key="g.id"
-          style="display: flex; align-items: center; gap: 8px"
-        >
-          <span>{{ g.kind_display }}</span>
-          <n-input-number
-            v-model:value="groupCoefficients[g.id]"
-            :min="0"
-            :step="0.1"
-            :precision="2"
-            style="width: 110px"
-          />
-        </div>
-        <n-button type="primary" secondary @click="saveGroupCoefficients">
-          保存系数
-        </n-button>
-      </n-space>
-    </n-card>
-
     <n-data-table :columns="columns" :data="rows" :loading="loading" :bordered="true" />
 
     <n-modal v-model:show="showModal">
@@ -179,6 +140,9 @@ onMounted(load)
         <n-form>
           <n-form-item label="名称">
             <n-input v-model:value="form.name" placeholder="如：早读 / 一 / 晚一" />
+          </n-form-item>
+          <n-form-item label="固有系数">
+            <n-input v-model:value="form.coefficient" placeholder="如 1.000" />
           </n-form-item>
           <n-form-item label="报告分组">
             <n-select

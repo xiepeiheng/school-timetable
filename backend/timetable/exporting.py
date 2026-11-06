@@ -175,7 +175,7 @@ def _teacher_category_counts(sessions):
 
 
 def _write_coefficient_block(
-    ws, teacher, sessions, start_row, base_coefficients, days
+    ws, teacher, sessions, start_row, days, slots
 ):
     """写参数区、按周工作量、按周系数明细和绩效结果。"""
     range_start, range_end = days[0], days[-1]
@@ -237,12 +237,14 @@ def _write_coefficient_block(
     detail_counts: dict[tuple, int] = defaultdict(int)
     for s in sessions:
         week_start = s.date - timedelta(days=s.date.weekday())
+        day_type = "周末" if _is_weekend(s.date) else "工作日"
         detail_counts[
             (
                 week_start,
+                day_type,
+                s.time_slot_id,
                 s.school_class_id,
                 s.subject_id,
-                s.time_slot.report_group.kind,
             )
         ] += 1
 
@@ -253,8 +255,6 @@ def _write_coefficient_block(
         ("教师系数", CROSS_GRADE_COEFFICIENT if teacher.is_cross_grade else 1.0),
         ("满课系数", float(teacher.full_load_score)),
         ("超额倍数", EXCESS_COEFFICIENT),
-        ("正课基准系数", base_coefficients[ReportGroup.Kind.COURSE]),
-        ("自习基准系数", base_coefficients[ReportGroup.Kind.SELF_STUDY]),
     ]
     param_start = title_row + 1
     param_rows = {}
@@ -262,7 +262,7 @@ def _write_coefficient_block(
         r = param_start + i
         ws.cell(row=r, column=1, value=label)
         ws.cell(row=r, column=2, value=value).fill = _EDIT_FILL
-        ws.cell(row=r, column=2).number_format = "0.00"
+        ws.cell(row=r, column=2).number_format = "0.000"
         param_rows[label] = r
         for c in (1, 2):
             ws.cell(row=r, column=c).border = _BORDER
@@ -296,9 +296,11 @@ def _write_coefficient_block(
     )
     detail_headers = [
         "周次",
+        "节次",
         "班级",
         "学科",
         "类别",
+        "日类型",
         "节数",
         "基准系数",
         "班级系数",
@@ -311,77 +313,79 @@ def _write_coefficient_block(
         ws.cell(row=header_row, column=col, value=head)
 
     teacher_coef_cell = f"$B${param_rows['教师系数']}"
-    course_base_cell = f"$B${param_rows['正课基准系数']}"
-    study_base_cell = f"$B${param_rows['自习基准系数']}"
     threshold_cell = f"$B${param_rows['满课系数']}"
     excess_cell = f"$B${param_rows['超额倍数']}"
+    slot_by_id = {slot.id: slot for slot in slots}
 
     first_detail_row = header_row + 1
     r = first_detail_row
     for week_start, week_label in [(w["start"], w["label"]) for w in weeks]:
-        for _, class_id, class_name, is_key_class in class_rows:
-            for _, subject_id, subject_name, is_main in subject_rows:
-                for kind in (ReportGroup.Kind.COURSE, ReportGroup.Kind.SELF_STUDY):
-                    count = detail_counts.get(
-                        (week_start, class_id, subject_id, kind), 0
-                    )
-                    if not count:
-                        continue
-                    class_factor = (
-                        KEY_CLASS_COEFFICIENT
-                        if kind == ReportGroup.Kind.COURSE
-                        and is_main
-                        and is_key_class
-                        else 1.0
-                    )
-                    ws.cell(row=r, column=1, value=week_label)
-                    ws.cell(row=r, column=2, value=class_name)
-                    ws.cell(row=r, column=3, value=subject_name)
-                    ws.cell(row=r, column=4, value=CATEGORY_LABEL[kind])
-                    ws.cell(row=r, column=5, value=count)
-                    ws.cell(
-                        row=r,
-                        column=6,
-                        value=(
-                            f'=IF($D{r}="正课",{course_base_cell},{study_base_cell})'
-                        ),
-                    )
-                    ws.cell(row=r, column=7, value=class_factor)
-                    ws.cell(row=r, column=8, value=f"={teacher_coef_cell}")
-                    ws.cell(row=r, column=9, value=f"=F{r}*G{r}*H{r}")
-                    ws.cell(row=r, column=10, value=f"=E{r}*I{r}")
-                    ws.cell(row=r, column=6).fill = _EDIT_FILL
-                    ws.cell(row=r, column=7).fill = _EDIT_FILL
-                    ws.cell(row=r, column=8).fill = _CALC_FILL
-                    ws.cell(row=r, column=9).fill = _CALC_FILL
-                    ws.cell(row=r, column=10).fill = _CALC_FILL
-                    for c in (6, 7, 8, 9, 10):
-                        ws.cell(row=r, column=c).number_format = "0.00"
-                    r += 1
+        for day_type in ("工作日", "周末"):
+            for slot in slots:
+                for _, class_id, class_name, is_key_class in class_rows:
+                    for _, subject_id, subject_name, is_main in subject_rows:
+                        count = detail_counts.get(
+                            (
+                                week_start,
+                                day_type,
+                                slot.id,
+                                class_id,
+                                subject_id,
+                            ),
+                            0,
+                        )
+                        if not count:
+                            continue
+                        kind = slot.report_group.kind
+                        class_factor = (
+                            KEY_CLASS_COEFFICIENT
+                            if is_main and is_key_class
+                            else 1.0
+                        )
+                        ws.cell(row=r, column=1, value=week_label)
+                        ws.cell(row=r, column=2, value=slot.name)
+                        ws.cell(row=r, column=3, value=class_name)
+                        ws.cell(row=r, column=4, value=subject_name)
+                        ws.cell(row=r, column=5, value=CATEGORY_LABEL[kind])
+                        ws.cell(row=r, column=6, value=day_type)
+                        ws.cell(row=r, column=7, value=count)
+                        ws.cell(row=r, column=8, value=float(slot.coefficient))
+                        ws.cell(row=r, column=9, value=class_factor)
+                        ws.cell(row=r, column=10, value=f"={teacher_coef_cell}")
+                        ws.cell(row=r, column=11, value=f"=H{r}*I{r}*J{r}")
+                        ws.cell(row=r, column=12, value=f"=G{r}*K{r}")
+                        ws.cell(row=r, column=8).fill = _EDIT_FILL
+                        ws.cell(row=r, column=9).fill = _EDIT_FILL
+                        ws.cell(row=r, column=10).fill = _CALC_FILL
+                        ws.cell(row=r, column=11).fill = _CALC_FILL
+                        ws.cell(row=r, column=12).fill = _CALC_FILL
+                        for c in range(8, 13):
+                            ws.cell(row=r, column=c).number_format = "0.000"
+                        r += 1
     detail_end_row = r - 1
 
     total_row = r
     ws.cell(row=total_row, column=1, value="合计")
     ws.cell(
         row=total_row,
-        column=5,
-        value=f"=SUM(E{first_detail_row}:E{detail_end_row})",
+        column=7,
+        value=f"=SUM(G{first_detail_row}:G{detail_end_row})",
     )
     ws.cell(
         row=total_row,
-        column=10,
-        value=f"=SUM(J{first_detail_row}:J{detail_end_row})",
+        column=12,
+        value=f"=SUM(L{first_detail_row}:L{detail_end_row})",
     )
-    for c in range(1, 11):
+    for c in range(1, 13):
         ws.cell(row=total_row, column=c).font = Font(bold=True)
         ws.cell(row=total_row, column=c).fill = _CALC_FILL
 
     for row in range(header_row, total_row + 1):
-        for col in range(1, 11):
+        for col in range(1, 13):
             cell = ws.cell(row=row, column=col)
             cell.border = _BORDER
             cell.alignment = _CENTER
-    for col in range(1, 11):
+    for col in range(1, 13):
         ws.cell(row=header_row, column=col).font = Font(bold=True)
 
     # 按周工作量：原始节数为静态值，系数/超额/最终绩效为公式。
@@ -400,7 +404,7 @@ def _write_coefficient_block(
             column=7,
             value=(
                 f"=SUMIF($A${first_detail_row}:$A${detail_end_row},"
-                f"$A{row},$J${first_detail_row}:$J${detail_end_row})"
+                f"$A{row},$L${first_detail_row}:$L${detail_end_row})"
             ),
         )
         ws.cell(row=row, column=8, value=f"={threshold_cell}")
@@ -411,7 +415,7 @@ def _write_coefficient_block(
             value=f"=IF(G{row}<=H{row},G{row},H{row}+I{row}*{excess_cell})",
         )
         for c in (7, 8, 9, 10):
-            ws.cell(row=row, column=c).number_format = "0.00"
+            ws.cell(row=row, column=c).number_format = "0.000"
             ws.cell(row=row, column=c).fill = _CALC_FILL
 
     for row in range(weekly_header_row, weekly_last_row + 1):
@@ -437,7 +441,7 @@ def _write_coefficient_block(
         ("原始总节数", category_counts["total"]),
         (
             "系数合计（未计超额）",
-            f"=SUM(J{first_detail_row}:J{detail_end_row})",
+            f"=SUM(L{first_detail_row}:L{detail_end_row})",
         ),
         ("周数", len(weeks)),
         (
@@ -457,17 +461,19 @@ def _write_coefficient_block(
         if i >= 3:
             ws.cell(row=row, column=2).fill = _CALC_FILL
     for i in range(3, len(results)):
-        ws.cell(row=result_start + 1 + i, column=2).number_format = "0.00"
+        ws.cell(row=result_start + 1 + i, column=2).number_format = "0.000"
 
     return {
         "note_start": result_start + len(results) + 2,
         "final_row": result_rows["按周绩效合计"],
+        "detail_first": first_detail_row,
+        "detail_last": detail_end_row,
         **category_counts,
     }
 
 
 def _write_teacher_sheet(
-    ws, teacher, days, slots, sess_map, teacher_sessions, base_coefficients
+    ws, teacher, days, slots, sess_map, teacher_sessions
 ):
     headers = ["日期", "星期"] + [s.name for s in slots] + ["合计"]
     for col, head in enumerate(headers, start=1):
@@ -599,8 +605,8 @@ def _write_teacher_sheet(
             teacher,
             teacher_sessions,
             end_row + 2,
-            base_coefficients,
             days,
+            slots,
         )
 
     note_start = summary["note_start"] if summary else total_row + 2
@@ -635,25 +641,48 @@ def _write_teacher_sheet(
 
 def _write_summary_sheet(ws, rows):
     headers = [
-        "教师姓名",
-        "周一至周五课",
-        "周一至周五自习",
-        "周六日课",
-        "周六日自习",
-        "总课时",
-        "最终绩效",
+        "任教科目",
+        "姓名",
+        "周一至周五正课绩效",
+        "周一至周五自习绩效",
+        "周六日正课绩效",
+        "周六日自习绩效",
+        "总绩效",
     ]
     for col, head in enumerate(headers, start=1):
         ws.cell(row=1, column=col, value=head)
 
     for i, row in enumerate(rows):
         r = 2 + i
-        ws.cell(row=r, column=1, value=row["teacher_name"])
-        ws.cell(row=r, column=2, value=row["workday_course"])
-        ws.cell(row=r, column=3, value=row["workday_study"])
-        ws.cell(row=r, column=4, value=row["weekend_course"])
-        ws.cell(row=r, column=5, value=row["weekend_study"])
-        ws.cell(row=r, column=6, value=row["total"])
+        ws.cell(row=r, column=1, value=row["subject_name"])
+        ws.cell(row=r, column=2, value=row["teacher_name"])
+
+        def ref(col: str) -> str:
+            return _excel_sheet_ref(
+                row["sheet_title"],
+                f"${col}${row['detail_first']}:${col}${row['detail_last']}",
+            )
+
+        ws.cell(
+            row=r,
+            column=3,
+            value=f'=SUMIFS({ref("L")},{ref("E")},"正课",{ref("F")},"工作日")',
+        )
+        ws.cell(
+            row=r,
+            column=4,
+            value=f'=SUMIFS({ref("L")},{ref("E")},"自习",{ref("F")},"工作日")',
+        )
+        ws.cell(
+            row=r,
+            column=5,
+            value=f'=SUMIFS({ref("L")},{ref("E")},"正课",{ref("F")},"周末")',
+        )
+        ws.cell(
+            row=r,
+            column=6,
+            value=f'=SUMIFS({ref("L")},{ref("E")},"自习",{ref("F")},"周末")',
+        )
         ws.cell(
             row=r,
             column=7,
@@ -662,7 +691,8 @@ def _write_summary_sheet(ws, rows):
                 row["sheet_title"], f"$B${row['final_row']}"
             ),
         )
-        ws.cell(row=r, column=7).number_format = "0.00"
+        for c in range(3, 8):
+            ws.cell(row=r, column=c).number_format = "0.000"
 
     nrows = 1 + len(rows)
     for r in range(1, nrows + 1):
@@ -673,32 +703,17 @@ def _write_summary_sheet(ws, rows):
     for c in range(1, 8):
         ws.cell(row=1, column=c).font = Font(bold=True)
 
-    ws.row_dimensions[1].height = 24
-    ws.column_dimensions["A"].width = 14
-    for c in range(2, 8):
-        ws.column_dimensions[get_column_letter(c)].width = 16
-    ws.freeze_panes = "A2"
+    ws.row_dimensions[1].height = 28
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 12
+    for c in range(3, 8):
+        ws.column_dimensions[get_column_letter(c)].width = 20
+    ws.freeze_panes = "C2"
 
 
 def build_teacher_workbook(start: date, end: date) -> openpyxl.Workbook:
     if start > end:
         raise BusinessException(message="起始日期不能晚于结束日期")
-
-    base_coefficients = {
-        kind: float(value)
-        for kind, value in ReportGroup.objects.values_list(
-            "kind", "coefficient"
-        )
-    }
-    missing_groups = [
-        ReportGroup.Kind.COURSE,
-        ReportGroup.Kind.SELF_STUDY,
-    ]
-    missing_groups = [kind for kind in missing_groups if kind not in base_coefficients]
-    if missing_groups:
-        raise BusinessException(
-            message="报告分组缺少：" + "、".join(missing_groups)
-        )
 
     slots = list(
         TimeSlot.objects.filter(
@@ -777,12 +792,12 @@ def build_teacher_workbook(start: date, end: date) -> openpyxl.Workbook:
             slots,
             by_teacher.get(teacher.id, {}),
             sessions_by_teacher.get(teacher.id, []),
-            base_coefficients,
         )
         if result:
             summary_rows.append(
                 {
                     "teacher_name": teacher.name,
+                    "subject_name": teacher.subject.name,
                     "sheet_title": title,
                     **result,
                 }

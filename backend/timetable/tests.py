@@ -517,10 +517,16 @@ class ExportTest(TestCase):
             kind="self_study", defaults={"sort_order": 1}
         )
         self.slot_early = TimeSlot.objects.create(
-            name="早读", sort_order=0, report_group=self.study_group
+            name="早读",
+            sort_order=0,
+            coefficient="0.500",
+            report_group=self.study_group,
         )
         self.slot_1 = TimeSlot.objects.create(
-            name="一", sort_order=1, report_group=self.course_group
+            name="一",
+            sort_order=1,
+            coefficient="1.000",
+            report_group=self.course_group,
         )
         self.s1 = CourseSession.objects.create(
             date=date(2026, 9, 7),
@@ -553,21 +559,21 @@ class ExportTest(TestCase):
         self.assertEqual(
             [summary.cell(row=1, column=c).value for c in range(1, 8)],
             [
-                "教师姓名",
-                "周一至周五课",
-                "周一至周五自习",
-                "周六日课",
-                "周六日自习",
-                "总课时",
-                "最终绩效",
+                "任教科目",
+                "姓名",
+                "周一至周五正课绩效",
+                "周一至周五自习绩效",
+                "周六日正课绩效",
+                "周六日自习绩效",
+                "总绩效",
             ],
         )
-        self.assertEqual(summary.cell(row=2, column=1).value, "马老师")
-        self.assertEqual(summary.cell(row=2, column=2).value, 1)
-        self.assertEqual(summary.cell(row=2, column=3).value, 1)
-        self.assertEqual(summary.cell(row=2, column=4).value, 0)
-        self.assertEqual(summary.cell(row=2, column=5).value, 0)
-        self.assertEqual(summary.cell(row=2, column=6).value, 2)
+        self.assertEqual(summary.cell(row=2, column=1).value, "语文")
+        self.assertEqual(summary.cell(row=2, column=2).value, "马老师")
+        for c in range(3, 7):
+            self.assertTrue(
+                str(summary.cell(row=2, column=c).value).startswith("=SUMIFS(")
+            )
         self.assertTrue(
             str(summary.cell(row=2, column=7).value).startswith(
                 "='语文-马老师'!$B$"
@@ -576,7 +582,7 @@ class ExportTest(TestCase):
         self.assertNotIn(
             "王老师",
             [
-                summary.cell(row=r, column=1).value
+                summary.cell(row=r, column=2).value
                 for r in range(2, summary.max_row + 1)
             ],
         )
@@ -626,20 +632,36 @@ class ExportTest(TestCase):
             str(ws.cell(row=weekly_row, column=7).value).startswith("=SUMIF(")
         )
 
-        # 系数明细（按周）：2601 语文 正课 1 节，班级系数 1.1；自习 1 节，班级系数 1.0
+        # 系数明细（按周）：2601 语文早读 0.5、课一 1.0；凌云班正科均乘 1.1
         detail_title = self.find_row(ws, "系数明细（按周）")
         header_row = detail_title + 1
         self.assertEqual(ws.cell(row=header_row, column=1).value, "周次")
-        self.assertEqual(ws.cell(row=header_row, column=4).value, "类别")
-        self.assertEqual(ws.cell(row=header_row + 1, column=2).value, "2601")
-        self.assertEqual(ws.cell(row=header_row + 1, column=4).value, "正课")
-        self.assertEqual(ws.cell(row=header_row + 1, column=5).value, 1)
-        self.assertEqual(ws.cell(row=header_row + 1, column=7).value, 1.1)
-        self.assertEqual(ws.cell(row=header_row + 2, column=4).value, "自习")
-        self.assertEqual(ws.cell(row=header_row + 2, column=5).value, 1)
-        self.assertEqual(ws.cell(row=header_row + 2, column=7).value, 1.0)
+        self.assertEqual(ws.cell(row=header_row, column=2).value, "节次")
+        self.assertEqual(ws.cell(row=header_row, column=5).value, "类别")
+        row_early = next(
+            r
+            for r in range(header_row + 1, ws.max_row + 1)
+            if ws.cell(row=r, column=2).value == "早读"
+            and ws.cell(row=r, column=3).value == "2601"
+        )
+        row_one = next(
+            r
+            for r in range(header_row + 1, ws.max_row + 1)
+            if ws.cell(row=r, column=2).value == "一"
+            and ws.cell(row=r, column=3).value == "2601"
+        )
+        self.assertEqual(ws.cell(row=row_early, column=5).value, "自习")
+        self.assertEqual(ws.cell(row=row_early, column=6).value, "工作日")
+        self.assertEqual(ws.cell(row=row_early, column=7).value, 1)
+        self.assertEqual(ws.cell(row=row_early, column=8).value, 0.5)
+        self.assertEqual(ws.cell(row=row_early, column=9).value, 1.1)
+        self.assertEqual(ws.cell(row=row_one, column=5).value, "正课")
+        self.assertEqual(ws.cell(row=row_one, column=6).value, "工作日")
+        self.assertEqual(ws.cell(row=row_one, column=7).value, 1)
+        self.assertEqual(ws.cell(row=row_one, column=8).value, 1.0)
+        self.assertEqual(ws.cell(row=row_one, column=9).value, 1.1)
         self.assertTrue(
-            str(ws.cell(row=header_row + 1, column=8).value).startswith("=$B$")
+            str(ws.cell(row=row_one, column=10).value).startswith("=$B$")
         )
 
         self.assertEqual(
@@ -656,7 +678,7 @@ class ExportTest(TestCase):
                 ws.cell(
                     row=self.find_row(ws, "系数合计（未计超额）"), column=2
                 ).value
-            ).startswith("=SUM(J")
+            ).startswith("=SUM(L")
         )
         self.find_row(ws, "按周绩效合计")
 
@@ -683,15 +705,17 @@ class ExportTest(TestCase):
         detail_title = self.find_row(ws, "系数明细（按周）")
         header_row = detail_title + 1
         headers = [
-            ws.cell(row=header_row, column=c).value for c in range(1, 11)
+            ws.cell(row=header_row, column=c).value for c in range(1, 13)
         ]
         self.assertEqual(
             headers,
             [
                 "周次",
+                "节次",
                 "班级",
                 "学科",
                 "类别",
+                "日类型",
                 "节数",
                 "基准系数",
                 "班级系数",
@@ -703,27 +727,41 @@ class ExportTest(TestCase):
         row_2602 = next(
             r
             for r in range(header_row + 1, ws.max_row + 1)
-            if ws.cell(row=r, column=2).value == "2602"
+            if ws.cell(row=r, column=3).value == "2602"
         )
-        self.assertEqual(ws.cell(row=row_2602, column=3).value, "数学")
-        self.assertEqual(ws.cell(row=row_2602, column=4).value, "正课")
-        self.assertEqual(ws.cell(row=row_2602, column=5).value, 1)
-        self.assertTrue(
-            str(ws.cell(row=row_2602, column=6).value).startswith("=IF($D")
-        )
-        self.assertEqual(ws.cell(row=row_2602, column=7).value, 1.1)
+        self.assertEqual(ws.cell(row=row_2602, column=4).value, "数学")
+        self.assertEqual(ws.cell(row=row_2602, column=5).value, "正课")
+        self.assertEqual(ws.cell(row=row_2602, column=6).value, "工作日")
+        self.assertEqual(ws.cell(row=row_2602, column=7).value, 1)
+        self.assertEqual(ws.cell(row=row_2602, column=8).value, 1.0)
+        self.assertEqual(ws.cell(row=row_2602, column=9).value, 1.1)
 
-    def test_coefficients_prefilled_from_report_groups(self):
-        self.course_group.coefficient = "1.20"
-        self.course_group.save(update_fields=["coefficient"])
-        self.study_group.coefficient = "0.60"
-        self.study_group.save(update_fields=["coefficient"])
+    def test_timeslot_coefficients_prefilled(self):
+        slot_four = TimeSlot.objects.create(
+            name="四",
+            sort_order=4,
+            coefficient="1.200",
+            report_group=self.course_group,
+        )
+        CourseSession.objects.create(
+            date=date(2026, 9, 8),
+            time_slot=slot_four,
+            school_class=self.c1,
+            subject=self.chinese,
+            teacher=self.t_ma,
+        )
 
         wb = build_teacher_workbook(date(2026, 9, 7), date(2026, 9, 8))
         ws = wb["语文-马老师"]
-        param_title = self.find_row(ws, "绩效系数计算")
-        self.assertEqual(ws.cell(row=param_title + 4, column=2).value, 1.2)
-        self.assertEqual(ws.cell(row=param_title + 5, column=2).value, 0.6)
+        detail_title = self.find_row(ws, "系数明细（按周）")
+        header_row = detail_title + 1
+        row_four = next(
+            r
+            for r in range(header_row + 1, ws.max_row + 1)
+            if ws.cell(row=r, column=2).value == "四"
+        )
+        self.assertEqual(ws.cell(row=row_four, column=8).value, 1.2)
+        self.assertEqual(ws.cell(row=row_four, column=9).value, 1.1)
 
     def test_cross_grade_and_non_main_subject(self):
         senior = Teacher.objects.create(
@@ -758,11 +796,11 @@ class ExportTest(TestCase):
         row_music = next(
             r
             for r in range(header_row + 1, ws.max_row + 1)
-            if ws.cell(row=r, column=2).value == "2602"
-            and ws.cell(row=r, column=3).value == "音乐"
+            if ws.cell(row=r, column=3).value == "2602"
+            and ws.cell(row=r, column=4).value == "音乐"
         )
-        self.assertEqual(ws.cell(row=row_music, column=4).value, "正课")
-        self.assertEqual(ws.cell(row=row_music, column=7).value, 1.0)
+        self.assertEqual(ws.cell(row=row_music, column=5).value, "正课")
+        self.assertEqual(ws.cell(row=row_music, column=9).value, 1.0)
 
     def test_missing_report_group_raises(self):
         from common.exceptions import BusinessException

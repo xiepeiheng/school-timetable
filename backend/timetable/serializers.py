@@ -99,7 +99,7 @@ class ReportGroupSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ReportGroup
-        fields = ["id", "kind", "kind_display", "coefficient", "sort_order"]
+        fields = ["id", "kind", "kind_display", "sort_order"]
 
 
 class TimeSlotSerializer(serializers.ModelSerializer):
@@ -113,6 +113,7 @@ class TimeSlotSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "sort_order",
+            "coefficient",
             "report_group",
             "report_group_name",
             "is_active",

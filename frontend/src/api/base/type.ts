@@ -33,6 +33,7 @@ export interface TimeSlot {
   id: number
   name: string
   sort_order: number
+  coefficient: string
   report_group: number | null
   report_group_name: string
   is_active: boolean
@@ -42,7 +43,6 @@ export interface ReportGroup {
   id: number
   kind: string
   kind_display: string
-  coefficient: string
   sort_order: number
 }
 

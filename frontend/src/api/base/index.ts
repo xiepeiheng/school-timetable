@@ -63,7 +63,7 @@ export const reqReportGroupList = () =>
   http.get<ResponseData<ReportGroup[]>>("/report-groups/")
 export const reqReportGroupUpdate = (
   id: number,
-  data: { sort_order?: number; coefficient?: string },
+  data: { sort_order?: number },
 ) => http.patch<ResponseData<ReportGroup>>(`/report-groups/${id}/`, data)
 
 // ── 学期（不分页） ──
